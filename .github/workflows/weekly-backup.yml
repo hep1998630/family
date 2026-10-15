@@ -1,0 +1,86 @@
+name: Weekly Backup
+
+# Why this exists, two reasons in one workflow:
+#
+# 1. Backup. The family tree lives entirely in Supabase's Postgres
+#    database. This workflow reads every row of every table through
+#    Supabase's REST API (PostgREST) and uploads them as a downloadable
+#    GitHub Actions artifact, so there's always a recent export sitting
+#    somewhere outside the database itself.
+#
+# 2. Keep-alive. Supabase's free tier automatically PAUSES a project
+#    after 7 days with no activity (see DEPLOYMENT.md's Troubleshooting
+#    section). A real query against the database, even a read-only one,
+#    counts as activity — so this same weekly run also prevents the
+#    pause from ever happening, as long as it keeps running.
+#
+# Runs on a schedule, and can also be triggered manually any time from
+# the Actions tab (useful right after setting this up, to check it
+# actually works, without waiting a week).
+
+on:
+  schedule:
+    # Fridays at 03:17 UTC. Deliberately NOT on the hour (:00) — GitHub
+    # runs a huge number of workflows at every hour mark across all of
+    # GitHub, which can delay a job queued right at :00 by several
+    # minutes; a few minutes past the hour avoids that queue.
+    - cron: '17 3 * * 5'
+  workflow_dispatch: {}
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch every table from Supabase and back it up
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            echo "::error::SUPABASE_URL and/or SUPABASE_ANON_KEY repository secrets are not set. See DEPLOYMENT.md for how to add them."
+            exit 1
+          fi
+
+          mkdir -p backup
+
+          # roots/people/partnerships/parent_child all have public "select
+          # using (true)" RLS policies (see supabase/migrations/001 and
+          # 003), so the anon key can read all of them directly — no
+          # service-role key needed for a backup of public data.
+          for table in roots people partnerships parent_child; do
+            echo "Fetching $table ..."
+
+            http_status=$(curl -sS -w "%{http_code}" -o "backup/$table.json" \
+              -H "apikey: $SUPABASE_ANON_KEY" \
+              -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+              "$SUPABASE_URL/rest/v1/$table?select=*")
+
+            if [ "$http_status" != "200" ]; then
+              echo "::error::Fetching $table failed with HTTP $http_status"
+              cat "backup/$table.json"
+              exit 1
+            fi
+
+            # A misconfigured URL (e.g. one that already ends in /rest/v1,
+            # see .env.example's warning) or an expired/paused project
+            # often returns an HTML error page with a 200-looking status
+            # from an intermediate proxy — catch that by requiring the
+            # body to actually be valid JSON, not just checking the
+            # status code above.
+            if ! jq empty "backup/$table.json" 2>/dev/null; then
+              echo "::error::Response for $table was not valid JSON — see backup/$table.json in the uploaded artifact for the raw response"
+              cat "backup/$table.json"
+              exit 1
+            fi
+
+            echo "$table: $(jq 'length' "backup/$table.json") rows"
+          done
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: family-tree-backup-${{ github.run_id }}
+          path: backup/
+          retention-days: 90
