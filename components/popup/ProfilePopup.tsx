@@ -11,6 +11,7 @@ interface ProfilePopupProps {
   personId: string | null
   isOpen: boolean
   isEditable: boolean
+  isOwner: boolean
   onClose: () => void
 
   // Data
@@ -27,6 +28,7 @@ export default function ProfilePopup({
   personId,
   isOpen,
   isEditable,
+  isOwner,
   onClose,
   people,
   partnerships,
@@ -134,6 +136,7 @@ export default function ProfilePopup({
           onCancel={onClose}
           onDelete={handleDelete}
           hasConnections={hasConnections}
+          isOwner={isOwner}
         />
       ) : (
         <ProfileView

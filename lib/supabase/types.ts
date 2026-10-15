@@ -137,6 +137,27 @@ export type Database = {
         }
         Relationships: []
       }
+      admins: {
+        Row: {
+          id: string
+          role: 'owner' | 'editor'
+          name: string | null
+          created_at: string
+        }
+        Insert: {
+          id: string
+          role: 'owner' | 'editor'
+          name?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          role?: 'owner' | 'editor'
+          name?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       people_with_root: {
@@ -207,6 +228,7 @@ export type RootRow = Tables<'roots'>
 export type PersonRow = Tables<'people'>
 export type PartnershipRow = Tables<'partnerships'>
 export type ParentChildRow = Tables<'parent_child'>
+export type AdminRow = Tables<'admins'>
 
 // Insert types
 export type InsertRoot = InsertTables<'roots'>

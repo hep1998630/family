@@ -1,7 +1,13 @@
-import { createClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
+import { createClient, getCurrentUserAndAdmin } from '@/lib/supabase/server'
 import TreeLayout from '@/components/tree/TreeLayout'
+import NotAnAdmin from '@/components/auth/NotAnAdmin'
 
 export default async function EditPage() {
+  const { user, admin } = await getCurrentUserAndAdmin()
+  if (!user) redirect('/login')
+  if (!admin) return <NotAnAdmin email={user.email ?? ''} />
+
   const supabase = await createClient()
 
   // Fetch all data server-side for initial render (SSR)
@@ -20,6 +26,8 @@ export default async function EditPage() {
   return (
     <TreeLayout
       isEditable={true}
+      isOwner={admin.role === 'owner'}
+      adminName={admin.name ?? user.email ?? ''}
       initialRoots={roots ?? []}
       initialPeople={people ?? []}
       initialPartnerships={partnerships ?? []}
