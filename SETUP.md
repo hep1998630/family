@@ -1,5 +1,20 @@
 # Setup
 
+## Applying migrations on a new Supabase project
+
+Run `supabase/migrations/001_initial_schema.sql` through `004_grant_data_api_access.sql`
+**in order** — each one depends on the schema the previous one created.
+This matters more than it used to: since 2026-05-30, new Supabase projects
+no longer auto-grant table access to the `anon`/`authenticated` roles by
+default, so `004_grant_data_api_access.sql` is not optional on a project
+created after that date — without it, every query from the app fails with
+a permission error at the Postgres grant level (before RLS is even
+evaluated), which looks identical to "not an admin" / "not allowed" from
+the app's point of view. If `/edit` shows "خطأ في إعدادات الخادم" (server
+configuration error) instead of the usual "not an admin" screen, this is
+the first thing to check — look at your deployment's function logs for the
+exact Postgres error `middleware.ts` logs.
+
 ## Adding a new admin (editor or owner)
 
 There is no self-service signup. Every admin account is created manually by

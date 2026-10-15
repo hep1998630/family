@@ -3,6 +3,7 @@ import { headers } from 'next/headers'
 import { createPublicClient } from '@/lib/supabase/server'
 import TreeApp from '@/components/branch/TreeApp'
 import NotAnAdmin from '@/components/auth/NotAnAdmin'
+import ServerConfigError from '@/components/auth/ServerConfigError'
 
 export default async function EditPage({
   searchParams,
@@ -18,8 +19,10 @@ export default async function EditPage({
   const userEmail = headerList.get('x-user-email')
   const adminRole = headerList.get('x-admin-role') as 'owner' | 'editor' | null
   const adminName = headerList.get('x-admin-name')
+  const adminError = headerList.get('x-admin-error')
 
   if (!userId) redirect('/login')
+  if (adminError) return <ServerConfigError />
   if (!adminRole) return <NotAnAdmin email={userEmail ?? ''} userId={userId} />
 
   const supabase = createPublicClient()
