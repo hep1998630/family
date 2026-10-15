@@ -4,12 +4,17 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Button from '@/components/ui/Button'
 
-export default function NotAnAdmin({ email }: { email: string }) {
+export default function NotAnAdmin({ email, userId }: { email: string; userId: string }) {
   const router = useRouter()
 
   const handleLogout = async () => {
     const supabase = createClient()
-    await supabase.auth.signOut()
+    try {
+      await supabase.auth.signOut()
+    } catch {
+      // Ignore — navigate to /login regardless, so a broken/already-
+      // invalid session can't leave the button looking like it did nothing.
+    }
     router.push('/login')
     router.refresh()
   }
@@ -22,6 +27,9 @@ export default function NotAnAdmin({ email }: { email: string }) {
         </h1>
         <p className="font-sans text-lg text-walnut-light leading-relaxed">
           الحساب {email} ليس من مسؤولي الشجرة. تواصل مع المسؤول الرئيسي لإضافتك.
+        </p>
+        <p className="font-sans text-sm text-walnut-light/70 leading-relaxed" dir="ltr">
+          user id: {userId}
         </p>
         <Button variant="secondary" size="sm" onClick={handleLogout}>
           تسجيل الخروج

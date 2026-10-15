@@ -1,6 +1,6 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import type { AdminRow, Database } from './types'
+import type { Database } from './types'
 
 export async function createClient() {
   const cookieStore = await cookies()
@@ -29,26 +29,30 @@ export async function createClient() {
 }
 
 /**
- * Resolves the signed-in user (if any) and their admin row (if any) —
- * `admin` is null both when there's no session and when the signed-in
- * user isn't an admin.
+ * A Supabase client that never reads or writes a session cookie — every
+ * call uses the anon key. Use this for data that's publicly readable via
+ * RLS (roots/people/partnerships/parent_child all have `select using
+ * (true)` policies) so these reads can never trigger a session refresh.
+ *
+ * Why this matters: a client that *does* carry a session will still try
+ * to attach it (via auth.getSession(), called internally by every
+ * .from() call) even for a public read, and that can trigger a token
+ * refresh. See middleware.ts's comment for why having more than one
+ * refresh-capable client per request is what causes random logouts.
  */
-export async function getCurrentUserAndAdmin() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { user: null, admin: null as AdminRow | null }
-
-  const { data: admin } = await supabase
-    .from('admins')
-    .select('*')
-    .eq('id', user.id)
-    .maybeSingle()
-
-  return { user, admin: admin ?? null }
-}
-
-/** Convenience wrapper over {@link getCurrentUserAndAdmin} for callers that only need the admin row. */
-export async function getCurrentAdmin(): Promise<AdminRow | null> {
-  const { admin } = await getCurrentUserAndAdmin()
-  return admin
+export function createPublicClient() {
+  return createServerClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return []
+        },
+        setAll() {
+          // never called — getAll() always returns no session to refresh
+        },
+      },
+    }
+  )
 }

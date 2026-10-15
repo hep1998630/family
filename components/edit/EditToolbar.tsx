@@ -22,7 +22,12 @@ export default function EditToolbar({
 
     const handleLogout = async () => {
         const supabase = createClient()
-        await supabase.auth.signOut()
+        try {
+            await supabase.auth.signOut()
+        } catch {
+            // Ignore — navigate to /login regardless, so a broken/already-
+            // invalid session can't leave the button looking like it did nothing.
+        }
         router.push('/login')
         router.refresh()
     }
