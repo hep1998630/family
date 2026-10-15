@@ -2,10 +2,16 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import type { Database } from '@/lib/supabase/types'
 
+// Header names this middleware uses to hand auth results to the page.
+// Trusted ONLY because they are stripped from the incoming request below
+// before anything else runs, then set fresh from our own verified lookup —
+// never forwarded from whatever the client itself sent.
+const AUTH_HEADERS = ['x-user-id', 'x-user-email', 'x-admin-role', 'x-admin-name', 'x-admin-error']
+
 // Refreshes the Supabase session cookie on /edit and /login, and resolves
 // the signed-in user's admin role exactly once, here — handing the result
-// to the page via request headers (x-user-id, x-user-email, x-admin-role,
-// x-admin-name) instead of letting the page re-check it itself.
+// to the page via the request headers above instead of letting the page
+// re-check it itself.
 //
 // This used to also happen a second time in app/edit/page.tsx (its own
 // call to supabase.auth.getUser(), then its own query against `admins`).
@@ -26,6 +32,14 @@ import type { Database } from '@/lib/supabase/types'
 // with anything else. See lib/supabase/client.ts for the other half of
 // this fix (disabling the browser's background auto-refresh timer).
 export async function middleware(request: NextRequest) {
+  // Strip any copies of these headers the CLIENT sent, before any other
+  // logic runs. Without this, an anonymous request could set
+  // `x-admin-role: owner` itself and app/edit/page.tsx would trust it —
+  // RLS still blocks the actual writes, but the edit UI would render for
+  // anyone. These headers are only ever meaningful when *we* set them,
+  // fresh, from the verified lookup below.
+  AUTH_HEADERS.forEach(name => request.headers.delete(name))
+
   const cookiesToSet: { name: string; value: string; options: CookieOptions }[] = []
 
   const supabase = createServerClient<Database>(
@@ -57,10 +71,16 @@ export async function middleware(request: NextRequest) {
       .maybeSingle()
 
     if (error) {
-      // Surfaced in the deployment's function logs — a query error here
-      // (e.g. the 003_add_auth_roles.sql migration not having been
-      // applied yet) would otherwise look identical to "not an admin".
+      // A real query error (e.g. a migration not applied, or — as seen in
+      // production — a fresh Supabase project that no longer auto-grants
+      // table access to anon/authenticated by default, see
+      // 004_grant_data_api_access.sql) must never look identical to "not
+      // an admin": that makes a server misconfiguration undiagnosable.
+      // Logged for the deployment's function logs, and also passed
+      // through so the page can show a distinct error instead of the
+      // generic "not an admin" screen.
       console.error('[middleware] admins lookup failed:', error.message)
+      request.headers.set('x-admin-error', error.message)
     } else if (admin) {
       request.headers.set('x-admin-role', admin.role)
       if (admin.name) request.headers.set('x-admin-name', admin.name)
