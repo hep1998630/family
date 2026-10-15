@@ -24,6 +24,8 @@ const ROOT_SPAWN_OFFSET_X = 900
 
 interface TreeLayoutProps {
   isEditable: boolean
+  isOwner?: boolean
+  adminName?: string
   initialPeople: PersonRow[]
   initialRoots: RootRow[]
   initialPartnerships: PartnershipRow[]
@@ -39,6 +41,8 @@ type ModalState =
 
 export default function TreeLayout({
   isEditable,
+  isOwner = false,
+  adminName,
   initialPeople,
   initialRoots,
   initialPartnerships,
@@ -330,12 +334,14 @@ export default function TreeLayout({
               isSaving={draft.isSaving}
               saveError={draft.saveError}
               onSave={draft.saveChanges}
+              adminName={adminName}
             />
             <PeopleListPanel
               people={searchablePeople}
               parentChildRows={parentChildRows}
               onNavigate={handleSearchSelect}
               onDelete={handleDeletePerson}
+              isOwner={isOwner}
             />
           </>
         ) : undefined}
@@ -362,6 +368,7 @@ export default function TreeLayout({
         personId={selectedPersonId}
         isOpen={popupOpen}
         isEditable={isEditable}
+        isOwner={isOwner}
         onClose={handleClosePopup}
         people={people}
         partnerships={partnerships}

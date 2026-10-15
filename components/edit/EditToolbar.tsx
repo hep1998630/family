@@ -1,11 +1,15 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
+
 interface EditToolbarProps {
     onAddRoot: () => void
     hasPendingChanges: boolean
     isSaving: boolean
     saveError: string | null
     onSave: () => void
+    adminName?: string
 }
 
 export default function EditToolbar({
@@ -14,7 +18,17 @@ export default function EditToolbar({
     isSaving,
     saveError,
     onSave,
+    adminName,
 }: EditToolbarProps) {
+    const router = useRouter()
+
+    const handleLogout = async () => {
+        const supabase = createClient()
+        await supabase.auth.signOut()
+        router.push('/login')
+        router.refresh()
+    }
+
     return (
         <>
             {/* ── Save Changes button (top-right corner) ── */}
@@ -22,6 +36,19 @@ export default function EditToolbar({
                 data-no-pan
                 className="absolute top-5 right-5 z-20 flex flex-col items-end gap-2"
             >
+                {adminName && (
+                    <div className="flex items-center gap-2 bg-white border-2 border-slate-200 rounded-xl px-4 py-2 shadow-card">
+                        <span className="font-sans text-sm text-walnut-light">
+                            مسجل الدخول: <span className="font-semibold text-charcoal">{adminName}</span>
+                        </span>
+                        <button
+                            onClick={handleLogout}
+                            className="font-sans text-sm font-semibold text-walnut hover:text-walnut-dark hover:underline"
+                        >
+                            تسجيل الخروج
+                        </button>
+                    </div>
+                )}
                 <button
                     onClick={onSave}
                     disabled={isSaving || !hasPendingChanges}

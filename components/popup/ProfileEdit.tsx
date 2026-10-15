@@ -16,6 +16,7 @@ interface ProfileEditProps {
   onCancel: () => void
   onDelete: (personId: string) => void
   hasConnections: boolean
+  isOwner: boolean
 }
 
 export default function ProfileEdit({
@@ -27,6 +28,7 @@ export default function ProfileEdit({
   onCancel,
   onDelete,
   hasConnections,
+  isOwner,
 }: ProfileEditProps) {
   const [values, setValues] = useState<PersonFormValues>({
     name: person.name,
@@ -225,14 +227,14 @@ export default function ProfileEdit({
             variant="danger"
             size="sm"
             onClick={() => setShowDeleteConfirm(true)}
-            disabled={hasConnections}
-            title={hasConnections ? 'لا يمكن الحذف — لديه أبناء' : undefined}
+            disabled={hasConnections || !isOwner}
+            title={!isOwner ? 'فقط المالك يمكنه الحذف' : hasConnections ? 'لا يمكن الحذف — لديه أبناء' : undefined}
             className="w-full"
           >
             <svg width="17" height="17" viewBox="0 0 17 17" fill="none">
               <path d="M2.5 4.5h12M6 4.5V3a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 .5.5v1.5M13.5 4.5l-.7 9a1 1 0 0 1-1 .9H5.2a1 1 0 0 1-1-.9l-.7-9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            {hasConnections ? 'لا يمكن الحذف — لديه أبناء' : 'حذف الشخص'}
+            {!isOwner ? 'فقط المالك يمكنه الحذف' : hasConnections ? 'لا يمكن الحذف — لديه أبناء' : 'حذف الشخص'}
           </Button>
         ) : (
           <div className="flex flex-col gap-3 p-4 rounded-2xl bg-red-50 border-2 border-red-200">

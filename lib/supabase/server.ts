@@ -1,6 +1,6 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import type { Database } from './types'
+import type { AdminRow, Database } from './types'
 
 export async function createClient() {
   const cookieStore = await cookies()
@@ -26,4 +26,29 @@ export async function createClient() {
       },
     }
   )
+}
+
+/**
+ * Resolves the signed-in user (if any) and their admin row (if any) —
+ * `admin` is null both when there's no session and when the signed-in
+ * user isn't an admin.
+ */
+export async function getCurrentUserAndAdmin() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { user: null, admin: null as AdminRow | null }
+
+  const { data: admin } = await supabase
+    .from('admins')
+    .select('*')
+    .eq('id', user.id)
+    .maybeSingle()
+
+  return { user, admin: admin ?? null }
+}
+
+/** Convenience wrapper over {@link getCurrentUserAndAdmin} for callers that only need the admin row. */
+export async function getCurrentAdmin(): Promise<AdminRow | null> {
+  const { admin } = await getCurrentUserAndAdmin()
+  return admin
 }

@@ -15,6 +15,7 @@ interface PeopleListPanelProps {
   parentChildRows: ParentChildRow[]
   onNavigate: (x: number, y: number, id: string) => void
   onDelete: (id: string) => void
+  isOwner: boolean
 }
 
 export default function PeopleListPanel({
@@ -22,6 +23,7 @@ export default function PeopleListPanel({
   parentChildRows,
   onNavigate,
   onDelete,
+  isOwner,
 }: PeopleListPanelProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -152,7 +154,7 @@ export default function PeopleListPanel({
           </p>
         ) : (
           filtered.map(person => {
-            const canDelete = !parentIds.has(person.id)
+            const canDelete = isOwner && !parentIds.has(person.id)
             const isConfirming = confirmId === person.id
 
             return (
@@ -201,7 +203,7 @@ export default function PeopleListPanel({
                   {/* Delete */}
                   <button
                     onClick={() => setConfirmId(isConfirming ? null : person.id)}
-                    title={canDelete ? 'حذف الشخص' : 'لا يمكن الحذف — لديه أبناء'}
+                    title={canDelete ? 'حذف الشخص' : !isOwner ? 'فقط المالك يمكنه الحذف' : 'لا يمكن الحذف — لديه أبناء'}
                     disabled={!canDelete}
                     className={`
                       w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0
