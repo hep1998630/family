@@ -11,6 +11,8 @@ interface ReferenceNodeProps {
   x: number
   y: number
   isEditable: boolean
+  isCrossBranch: boolean
+  targetRootName?: string
   onNavigateToOriginal: (personId: string) => void
   onRemovePartner: (ownerPersonId: string, refPersonId: string) => void
 }
@@ -21,6 +23,8 @@ export default function ReferenceNode({
   x,
   y,
   isEditable,
+  isCrossBranch,
+  targetRootName,
   onNavigateToOriginal,
   onRemovePartner,
 }: ReferenceNodeProps) {
@@ -53,13 +57,14 @@ export default function ReferenceNode({
   return (
     <div
       ref={nodeRef}
-      data-no-pan
       className={`person-node reference${active ? ' person-node--active' : ''}`}
       style={{ left: x, top: y, width: NODE_WIDTH, minHeight: NODE_HEIGHT }}
       onClick={handleClick}
       title={
         active
-          ? `اضغط مرة أخرى للانتقال إلى ${person.name}`
+          ? isCrossBranch
+            ? `اضغط مرة أخرى للانتقال إلى فرع ${targetRootName ?? ''}`
+            : `اضغط مرة أخرى للانتقال إلى ${person.name}`
           : `${person.name} — اضغط للخيارات`
       }
     >
@@ -87,7 +92,7 @@ export default function ReferenceNode({
               stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
             />
           </svg>
-          انتقل للأصل
+          {isCrossBranch ? `تزوج من فرع ${targetRootName ?? 'آخر'}` : 'انتقل للأصل'}
         </p>
       </div>
 

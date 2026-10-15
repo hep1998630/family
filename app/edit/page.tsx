@@ -1,9 +1,14 @@
 import { redirect } from 'next/navigation'
 import { createClient, getCurrentUserAndAdmin } from '@/lib/supabase/server'
-import TreeLayout from '@/components/tree/TreeLayout'
+import TreeApp from '@/components/branch/TreeApp'
 import NotAnAdmin from '@/components/auth/NotAnAdmin'
 
-export default async function EditPage() {
+export default async function EditPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ root?: string; focus?: string }>
+}) {
+  const { root, focus } = await searchParams
   const { user, admin } = await getCurrentUserAndAdmin()
   if (!user) redirect('/login')
   if (!admin) return <NotAnAdmin email={user.email ?? ''} />
@@ -24,7 +29,7 @@ export default async function EditPage() {
   ])
 
   return (
-    <TreeLayout
+    <TreeApp
       isEditable={true}
       isOwner={admin.role === 'owner'}
       adminName={admin.name ?? user.email ?? ''}
@@ -32,6 +37,8 @@ export default async function EditPage() {
       initialPeople={people ?? []}
       initialPartnerships={partnerships ?? []}
       initialParentChild={parentChild ?? []}
+      initialRootId={root ?? null}
+      initialFocusId={focus ?? null}
     />
   )
 }

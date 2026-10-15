@@ -34,6 +34,7 @@ export function computeLayout(
   people: PersonRow[],
   partnerships: PartnershipRow[],
   parentChildRows: ParentChildRow[],
+  maxDepth: number = Infinity,
 ): LayoutedRoot[] {
   // Build lookup maps
   const peopleById = new Map<string, PersonRow>(people.map(p => [p.id, p]))
@@ -48,10 +49,7 @@ export function computeLayout(
   let canvasOffsetX = 100 // starting X for the first root
 
   for (const root of roots) {
-    // Find root person: the person in this root with no parent in parent_child
-    // who is also not a shortcut
-    const rootPeople = people.filter(p => p.root_id === root.id && !p.is_shortcut)
-    const rootPerson = rootPeople.find(p => !childIdsSet.has(p.id)) ?? rootPeople[0]
+    const rootPerson = findRootPerson(root.id, people, parentChildRows)
 
     if (!rootPerson) continue
 
@@ -64,6 +62,8 @@ export function computeLayout(
       childrenMap,
       childIdsSet,
       visited,
+      0,
+      maxDepth,
     )
 
     // Compute subtree widths bottom-up, then assign x/y positions top-down
@@ -86,6 +86,43 @@ export function computeLayout(
   return results
 }
 
+/**
+ * Finds the topmost ancestor of a root: the person in this root with no
+ * parent in parent_child, who is also not a shortcut. Used both by
+ * computeLayout and by the branch picker (which needs a founder to show
+ * without running full layout).
+ */
+export function findRootPerson(
+  rootId: string,
+  people: PersonRow[],
+  parentChildRows: ParentChildRow[],
+): PersonRow | undefined {
+  const childIdsSet = new Set(parentChildRows.map(pc => pc.child_id))
+  const rootPeople = people.filter(p => p.root_id === rootId && !p.is_shortcut)
+  return rootPeople.find(p => !childIdsSet.has(p.id)) ?? rootPeople[0]
+}
+
+/**
+ * Number of parent_child hops from the root person down to `personId`
+ * (root person itself = depth 0). Used to make sure a search/navigation
+ * target is never hidden behind a `maxDepth` cap.
+ */
+export function computeDepthFromRoot(
+  personId: string,
+  parentChildRows: ParentChildRow[],
+): number {
+  const childToParent = new Map(parentChildRows.map(pc => [pc.child_id, pc.parent_id]))
+  let depth = 0
+  let current = personId
+  const seen = new Set<string>()
+  while (childToParent.has(current) && !seen.has(current)) {
+    seen.add(current)
+    current = childToParent.get(current)!
+    depth++
+  }
+  return depth
+}
+
 // ── Tree building ─────────────────────────────────────────────────────────────
 
 function buildTreeNode(
@@ -95,6 +132,8 @@ function buildTreeNode(
   childrenMap: Map<string, string[]>,
   childIdsSet: Set<string>,
   visited: Set<string>,
+  depth: number,
+  maxDepth: number,
 ): TreeNode {
   visited.add(person.id)
 
@@ -132,12 +171,22 @@ function buildTreeNode(
     .flatMap(pn => childrenMap.get(pn.person.id) ?? [])
   const allChildIds = [...new Set([...ownChildIds, ...partnerChildIds])]
 
-  const childNodes: TreeNode[] = allChildIds
+  const unvisitedChildren = allChildIds
     .map(cid => peopleById.get(cid))
     .filter((p): p is PersonRow => !!p && !visited.has(p.id))
-    .map(p => buildTreeNode(p, peopleById, partnerMap, childrenMap, childIdsSet, visited))
 
-  return { person, x: 0, y: 0, partners: partnerNodes, children: childNodes }
+  // Depth cap reached and there's real children below: stop recursing and
+  // flag this node so the UI can offer a "show more generations" action
+  // instead of silently dropping people from the tree.
+  const truncated = unvisitedChildren.length > 0 && depth >= maxDepth
+
+  const childNodes: TreeNode[] = truncated
+    ? []
+    : unvisitedChildren.map(p =>
+        buildTreeNode(p, peopleById, partnerMap, childrenMap, childIdsSet, visited, depth + 1, maxDepth)
+      )
+
+  return { person, x: 0, y: 0, partners: partnerNodes, children: childNodes, truncated }
 }
 
 // ── Width computation (bottom-up) ─────────────────────────────────────────────

@@ -4,16 +4,14 @@ import { useMemo, useState } from 'react'
 import Avatar from '@/components/ui/Avatar'
 import type { PersonRow, ParentChildRow } from '@/lib/supabase/types'
 
-interface PositionedPerson extends PersonRow {
-  computedX: number
-  computedY: number
+interface NamedPerson extends PersonRow {
   root_name?: string
 }
 
 interface PeopleListPanelProps {
-  people: PositionedPerson[]
+  people: NamedPerson[]
   parentChildRows: ParentChildRow[]
-  onNavigate: (x: number, y: number, id: string) => void
+  onNavigate: (id: string) => void
   onDelete: (id: string) => void
   isOwner: boolean
 }
@@ -53,11 +51,10 @@ export default function PeopleListPanel({
   if (!isOpen) {
     return (
       <button
-        data-no-pan
         onClick={() => setIsOpen(true)}
         title="عرض قائمة الأشخاص"
         className="
-          absolute top-5 left-5 z-20
+          fixed top-5 left-5 z-30
           w-12 h-12 rounded-xl
           bg-white border-2 border-slate-200
           flex items-center justify-center
@@ -78,9 +75,8 @@ export default function PeopleListPanel({
   // ── Expanded panel ───────────────────────────────────────────
   return (
     <div
-      data-no-pan
       className="
-        absolute top-5 left-5 z-20
+        fixed top-5 left-5 z-30
         flex flex-col
         w-80 max-h-[calc(100%-7rem)]
         bg-white
@@ -185,8 +181,8 @@ export default function PeopleListPanel({
 
                   {/* Navigate */}
                   <button
-                    onClick={() => onNavigate(person.computedX, person.computedY, person.id)}
-                    title="انتقل لهذا الشخص على الخريطة"
+                    onClick={() => onNavigate(person.id)}
+                    title="انتقل لهذا الشخص"
                     className="
                       w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0
                       text-walnut-light hover:text-walnut hover:bg-parchment

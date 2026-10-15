@@ -44,30 +44,14 @@
   }
 }
 
-/* ── Canvas ───────────────────────────────────────────────── */
-.canvas-wrapper {
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
+/* ── Branch tree view (native scrolling — no custom gesture code) ── */
+.branch-scroll {
+  overflow: auto;
   position: relative;
-  cursor: grab;
-  touch-action: none;
   background-color: var(--color-bg);
   background-image:
     radial-gradient(circle, rgba(15, 23, 42, 0.07) 1px, transparent 1px);
   background-size: 32px 32px;
-}
-
-.canvas-wrapper:active {
-  cursor: grabbing;
-}
-
-.canvas-inner {
-  position: absolute;
-  top: 0;
-  left: 0;
-  transform-origin: 0 0;
-  will-change: transform;
 }
 
 /* ── Connector lines (SVG) ────────────────────────────────── */

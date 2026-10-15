@@ -8,6 +8,7 @@ interface ShortcutNodeProps {
   person: PersonRow
   x: number
   y: number
+  targetRootName?: string
   onNavigateToOriginal: (originalPersonId: string) => void
   onClickPerson: (personId: string) => void
   isEditable: boolean
@@ -17,6 +18,7 @@ export default function ShortcutNode({
   person,
   x,
   y,
+  targetRootName,
   onNavigateToOriginal,
   onClickPerson,
 }: ShortcutNodeProps) {
@@ -27,11 +29,10 @@ export default function ShortcutNode({
 
   return (
     <div
-      data-no-pan
       className="person-node shortcut group"
       style={{ left: x, top: y, width: NODE_WIDTH, minHeight: NODE_HEIGHT }}
       onClick={() => onClickPerson(person.id)}
-      title={`${person.name} — من عائلة أخرى`}
+      title={`${person.name} — من فرع ${targetRootName ?? 'آخر'}`}
     >
       {/* ── Avatar ── */}
       <Avatar name={person.name} photoUrl={person.photo_url} size={58} />
@@ -50,14 +51,14 @@ export default function ShortcutNode({
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
             <path d="M1 5h8M6 2l3 3-3 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-          عائلة أخرى
+          فرع {targetRootName ?? 'آخر'}
         </p>
       </div>
 
       {/* ── Navigate badge ── */}
       <button
         onClick={handleNavigate}
-        title={`الانتقال إلى ${person.name} في عائلته الأصلية`}
+        title={`الانتقال إلى ${person.name} في فرعه الأصلي`}
         className="
           absolute -top-3 -right-3
           w-8 h-8 rounded-full
