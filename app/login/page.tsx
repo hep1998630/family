@@ -1,10 +1,13 @@
 import { redirect } from 'next/navigation'
-import { getCurrentAdmin } from '@/lib/supabase/server'
+import { headers } from 'next/headers'
 import LoginForm from '@/components/auth/LoginForm'
 
 export default async function LoginPage() {
-  const admin = await getCurrentAdmin()
-  if (admin) redirect('/edit')
+  // Resolved by middleware.ts — see its comment for why this page must
+  // not independently call supabase.auth.getUser() itself.
+  const headerList = await headers()
+  const adminRole = headerList.get('x-admin-role')
+  if (adminRole) redirect('/edit')
 
   return (
     <main className="min-h-screen bg-parchment flex flex-col items-center justify-center px-6">
