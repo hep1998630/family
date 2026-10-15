@@ -1,7 +1,12 @@
 import { createClient } from '@/lib/supabase/server'
-import TreeLayout from '@/components/tree/TreeLayout'
+import TreeApp from '@/components/branch/TreeApp'
 
-export default async function ViewPage() {
+export default async function ViewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ root?: string; focus?: string }>
+}) {
+  const { root, focus } = await searchParams
   const supabase = await createClient()
 
   // Fetch all data server-side for initial render (SSR)
@@ -18,12 +23,14 @@ export default async function ViewPage() {
   ])
 
   return (
-    <TreeLayout
+    <TreeApp
       isEditable={false}
       initialRoots={roots ?? []}
       initialPeople={people ?? []}
       initialPartnerships={partnerships ?? []}
       initialParentChild={parentChild ?? []}
+      initialRootId={root ?? null}
+      initialFocusId={focus ?? null}
     />
   )
 }

@@ -25,6 +25,12 @@ export interface TreeNode {
    * (the "owner" of the partnership). Used to locate the partnership row for removal.
    */
   ownerPersonId?: string
+  /**
+   * True when this node's real children exist but were not built because
+   * `maxDepth` was reached — a "show more generations" affordance should
+   * render here instead.
+   */
+  truncated?: boolean
 }
 
 // ── A fully laid-out family root ──────────────────────────────────────────────
@@ -66,12 +72,6 @@ export interface PopupState {
   personId: string | null
   /** 'view' in /view route, 'edit' in /edit route */
   mode: 'view' | 'edit'
-}
-
-export interface CanvasTransform {
-  x: number
-  y: number
-  scale: number
 }
 
 // ── Form types ────────────────────────────────────────────────────────────────

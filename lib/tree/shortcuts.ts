@@ -1,58 +1,11 @@
 // lib/tree/shortcuts.ts
 //
-// Resolves shortcut nodes: when a person from another family is a partner
-// in this family, they appear as a shortcut node with a distinct color.
-// Clicking them pans the canvas to their original position.
+// Shortcut nodes: when a person from another family is a partner in this
+// family, they appear as a shortcut node with a distinct color. Clicking
+// one navigates to the person's real branch (see components/branch/TreeApp.tsx's
+// navigateToPerson) — no coordinates needed, just the target person's id.
 
 import type { PersonRow } from '@/lib/supabase/types'
-import type { TreeNode, LayoutedRoot } from '@/types'
-
-/**
- * Given all laid-out roots and all people, return a map of:
- *   shortcut person id → original TreeNode position
- *
- * This is used by the canvas to know where to pan when a shortcut is clicked.
- */
-export function buildShortcutTargetMap(
-  layoutedRoots: LayoutedRoot[],
-): Map<string, { x: number; y: number; originalPersonId: string }> {
-  const map = new Map<string, { x: number; y: number; originalPersonId: string }>()
-
-  // Flatten all nodes across all roots
-  const allNodes = layoutedRoots.flatMap(lr => lr.allNodes)
-
-  for (const node of allNodes) {
-    if (node.person.is_shortcut && node.person.original_person_id) {
-      // DB shortcut node (cross-family): key = shortcut's id, value = original's position.
-      // handleNavigateToOriginal reaches this via the value-search fallback.
-      const originalNode = allNodes.find(
-        n => n.person.id === node.person.original_person_id
-      )
-      if (originalNode) {
-        map.set(node.person.id, {
-          x: originalNode.x,
-          y: originalNode.y,
-          originalPersonId: originalNode.person.id,
-        })
-      }
-    } else if (node.isReference) {
-      // Virtual reference node (same- or cross-family partner already placed elsewhere).
-      // key = the real person's id so handleNavigateToOriginal finds it via direct lookup.
-      const realNode = allNodes.find(
-        n => n.person.id === node.person.id && !n.isReference
-      )
-      if (realNode) {
-        map.set(node.person.id, {
-          x: realNode.x,
-          y: realNode.y,
-          originalPersonId: realNode.person.id,
-        })
-      }
-    }
-  }
-
-  return map
-}
 
 /**
  * When creating a cross-family partnership (cousin marriage scenario),

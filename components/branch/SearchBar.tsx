@@ -9,13 +9,11 @@ interface SearchablePerson {
   nickname: string | null
   photo_url: string | null
   root_name?: string
-  computedX: number
-  computedY: number
 }
 
 interface SearchBarProps {
   people: SearchablePerson[]
-  onSelectPerson: (x: number, y: number, id: string) => void
+  onSelectPerson: (id: string) => void
 }
 
 export default function SearchBar({ people, onSelectPerson }: SearchBarProps) {
@@ -55,7 +53,7 @@ export default function SearchBar({ people, onSelectPerson }: SearchBarProps) {
     setIsOpen(false)
     setActiveIdx(-1)
     inputRef.current?.blur()
-    onSelectPerson(person.computedX, person.computedY, person.id)
+    onSelectPerson(person.id)
   }, [onSelectPerson])
 
   // ── Keyboard navigation ──────────────────────────────────────
@@ -112,7 +110,6 @@ export default function SearchBar({ people, onSelectPerson }: SearchBarProps) {
   return (
     <div
       ref={containerRef}
-      data-no-pan
       className="absolute top-5 left-1/2 -translate-x-1/2 z-20 w-96"
     >
       {/* ── Input ── */}
@@ -154,7 +151,6 @@ export default function SearchBar({ people, onSelectPerson }: SearchBarProps) {
           "
           aria-label="البحث في أفراد العائلة"
           aria-autocomplete="list"
-          aria-expanded={isOpen}
         />
 
         {/* Clear button */}

@@ -39,7 +39,7 @@ export default function PersonNode({
 
   return (
     <div
-      data-no-pan
+      id={`person-${person.id}`}
       data-person-node
       className={`person-node${person.gender === 'male' ? ' person-node--male' : person.gender === 'female' ? ' person-node--female' : ''}${isHighlighted ? ' person-node--highlighted' : ''}${isActive ? ' person-node--active' : ''}`}
       style={{ left: x, top: y, width: NODE_WIDTH, minHeight: NODE_HEIGHT }}

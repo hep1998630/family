@@ -1,8 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import Canvas from '@/components/canvas/Canvas'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { usePathname, useRouter } from 'next/navigation'
 import FamilyRoot from '@/components/tree/FamilyRoot'
+import BranchPicker from '@/components/branch/BranchPicker'
+import SearchBar from '@/components/branch/SearchBar'
 import ProfilePopup from '@/components/popup/ProfilePopup'
 import AddPersonModal from '@/components/edit/AddPersonModal'
 import AddRootModal from '@/components/edit/AddRootModal'
@@ -13,16 +15,14 @@ import { usePeople } from '@/hooks/usePeople'
 import { usePartnerships } from '@/hooks/usePartnerships'
 import { useParentChild } from '@/hooks/useParentChild'
 import { useEditDraft } from '@/hooks/useEditDraft'
-import { useTreeLayout } from '@/hooks/useTreeLayout'
-import { useCanvas } from '@/hooks/useCanvas'
-import { NODE_WIDTH, NODE_HEIGHT } from '@/lib/tree/layout'
+import { computeLayout, computeDepthFromRoot } from '@/lib/tree/layout'
 import type { PersonRow, PartnershipRow, ParentChildRow, RootRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
 
-// ── How far apart to auto-place new roots ────────────────────
-const ROOT_SPAWN_OFFSET_X = 900
+const DEFAULT_MAX_DEPTH = 3
+const EXPAND_INCREMENT = 2
 
-interface TreeLayoutProps {
+interface TreeAppProps {
   isEditable: boolean
   isOwner?: boolean
   adminName?: string
@@ -30,16 +30,17 @@ interface TreeLayoutProps {
   initialRoots: RootRow[]
   initialPartnerships: PartnershipRow[]
   initialParentChild: ParentChildRow[]
+  initialRootId?: string | null
+  initialFocusId?: string | null
 }
 
-// ── Modal state shape ────────────────────────────────────────
 type ModalState =
   | { type: 'none' }
   | { type: 'addPartner'; personId: string; personName: string }
   | { type: 'addChild'; personId: string; personName: string }
   | { type: 'addRoot' }
 
-export default function TreeLayout({
+export default function TreeApp({
   isEditable,
   isOwner = false,
   adminName,
@@ -47,19 +48,19 @@ export default function TreeLayout({
   initialRoots,
   initialPartnerships,
   initialParentChild,
-}: TreeLayoutProps) {
-  const wrapperRef = useRef<HTMLDivElement>(null)
+  initialRootId = null,
+  initialFocusId = null,
+}: TreeAppProps) {
+  const router = useRouter()
+  const pathname = usePathname()
 
   // ── Data hooks — all called unconditionally (rules of hooks) ─
-  // Live hooks (view mode): maintain real-time subscriptions
   const liveRoots = useRoots(initialRoots)
   const livePeople = usePeople(initialPeople)
   const livePartnerships = usePartnerships(initialPartnerships)
   const liveParentChild = useParentChild(initialParentChild)
-  // Draft hook (edit mode): local-only state, deferred DB writes
   const draft = useEditDraft(initialRoots, initialPeople, initialPartnerships, initialParentChild)
 
-  // Select the active data source based on mode
   const roots           = isEditable ? draft.roots           : liveRoots.roots
   const people          = isEditable ? draft.people          : livePeople.people
   const partnerships    = isEditable ? draft.partnerships    : livePartnerships.partnerships
@@ -72,38 +73,80 @@ export default function TreeLayout({
   const updatePerson    = isEditable ? draft.updatePerson    : livePeople.updatePerson
   const deletePerson    = isEditable ? draft.deletePerson    : livePeople.deletePerson
   const uploadPhoto     = isEditable ? draft.uploadPhoto     : livePeople.uploadPhoto
-  const hasConnections  = isEditable ? draft.hasConnections  : livePeople.hasConnections
 
-  // ── Layout engine ───────────────────────────────────────────
-  const { layoutedRoots, shortcutTargetMap, allPositionedPeople } = useTreeLayout(
-    roots, people, partnerships, parentChildRows
+  // ── Lookup maps ───────────────────────────────────────────────
+  const peopleById = useMemo(() => new Map(people.map(p => [p.id, p])), [people])
+  const rootNamesById = useMemo(() => new Map(roots.map(r => [r.id, r.name])), [roots])
+
+  // ── Branch selection + URL sync ───────────────────────────────
+  const [selectedRootId, setSelectedRootIdState] = useState<string | null>(initialRootId)
+  const [maxDepth, setMaxDepth] = useState(DEFAULT_MAX_DEPTH)
+  const [pendingFocusId, setPendingFocusId] = useState<string | null>(initialFocusId)
+
+  const setSelectedRootId = useCallback((rootId: string | null) => {
+    setSelectedRootIdState(rootId)
+    const query = rootId ? `?root=${rootId}` : ''
+    router.replace(`${pathname}${query}`, { scroll: false })
+  }, [router, pathname])
+
+  const selectBranch = useCallback((rootId: string) => {
+    setMaxDepth(DEFAULT_MAX_DEPTH)
+    setSelectedRootId(rootId)
+  }, [setSelectedRootId])
+
+  const backToBranches = useCallback(() => {
+    setSelectedRootId(null)
+  }, [setSelectedRootId])
+
+  /** Switches to a person's real branch (if needed), ensures maxDepth reaches
+   *  them, then scrolls to and highlights their node — used by both search
+   *  and reference/shortcut "navigate to original" clicks. */
+  const navigateToPerson = useCallback((personId: string) => {
+    const person = peopleById.get(personId)
+    if (!person) return
+    const neededDepth = computeDepthFromRoot(personId, parentChildRows) + 1
+    setMaxDepth(Math.max(DEFAULT_MAX_DEPTH, neededDepth))
+    if (person.root_id !== selectedRootId) setSelectedRootId(person.root_id)
+    setPendingFocusId(personId)
+  }, [peopleById, parentChildRows, selectedRootId, setSelectedRootId])
+
+  // ── Layout for the selected branch only ──────────────────────
+  const selectedRoot = useMemo(
+    () => (selectedRootId ? roots.find(r => r.id === selectedRootId) ?? null : null),
+    [roots, selectedRootId]
   )
 
-  // ── Canvas ──────────────────────────────────────────────────
-  const canvas = useCanvas()
-  const { panTo } = canvas
+  const layoutedRoot = useMemo(() => {
+    if (!selectedRoot) return null
+    const [lr] = computeLayout([selectedRoot], people, partnerships, parentChildRows, maxDepth)
+    return lr ?? null
+  }, [selectedRoot, people, partnerships, parentChildRows, maxDepth])
 
-  // Track actual viewport dimensions so panTo works correctly on all screen sizes
-  const [viewport, setViewport] = useState({
-    width: typeof window !== 'undefined' ? window.innerWidth : 1440,
-    height: typeof window !== 'undefined' ? window.innerHeight : 900,
-  })
-  useEffect(() => {
-    const update = () => setViewport({ width: window.innerWidth, height: window.innerHeight })
-    window.addEventListener('resize', update)
-    return () => window.removeEventListener('resize', update)
-  }, [])
-
-  // ── UI state ────────────────────────────────────────────────
-  const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null)
-  const [activeNodeId, setActiveNodeId] = useState<string | null>(null)
+  // ── Scroll-to-and-highlight once the focus target is in the DOM ──
   const [highlightedPersonId, setHighlightedPersonId] = useState<string | null>(null)
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const highlightDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (!pendingFocusId) return
+    const el = document.getElementById(`person-${pendingFocusId}`)
+    if (!el) return // not mounted yet — effect re-runs when layoutedRoot updates
+    el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
+    const focusedId = pendingFocusId
+    const t = setTimeout(() => {
+      setHighlightedPersonId(focusedId)
+      highlightTimerRef.current = setTimeout(() => setHighlightedPersonId(null), 2000)
+    }, 400)
+    setPendingFocusId(null)
+    return () => clearTimeout(t)
+  }, [pendingFocusId, layoutedRoot])
+
+  // ── UI state ──────────────────────────────────────────────────
+  const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null)
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null)
   const [modal, setModal] = useState<ModalState>({ type: 'none' })
   const popupOpen = selectedPersonId !== null
 
-  // ── Person click / popup close ───────────────────────────────
   const handleActivateNode = useCallback((id: string) => setActiveNodeId(id), [])
   const handleClickPerson = useCallback((id: string) => {
     setActiveNodeId(null)
@@ -111,7 +154,6 @@ export default function TreeLayout({
   }, [])
   const handleClosePopup = useCallback(() => setSelectedPersonId(null), [])
 
-  // ── Click-away: deactivate active node ───────────────────────
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (!(e.target as Element).closest('[data-person-node]')) {
@@ -122,7 +164,6 @@ export default function TreeLayout({
     return () => document.removeEventListener('click', handler)
   }, [])
 
-  // ── Update person (from ProfileEdit) ────────────────────────
   const handleUpdatePerson = useCallback(async (
     id: string,
     values: PersonFormValues,
@@ -144,37 +185,31 @@ export default function TreeLayout({
     })
   }, [updatePerson, uploadPhoto])
 
-  // ── Delete person ───────────────────────────────────────────
   const handleDeletePerson = useCallback((id: string) => {
     deletePerson(id)
     if (selectedPersonId === id) setSelectedPersonId(null)
     if (activeNodeId === id) setActiveNodeId(null)
   }, [deletePerson, selectedPersonId, activeNodeId])
 
-  // ── Open "Add Partner" modal ─────────────────────────────────
   const handleAddPartner = useCallback((personId: string) => {
     const person = people.find(p => p.id === personId)
     if (!person) return
     setModal({ type: 'addPartner', personId, personName: person.name })
   }, [people])
 
-  // ── Open "Add Child" modal ───────────────────────────────────
   const handleAddChild = useCallback((personId: string) => {
     const person = people.find(p => p.id === personId)
     if (!person) return
     setModal({ type: 'addChild', personId, personName: person.name })
   }, [people])
 
-  // ── Confirm add partner ──────────────────────────────────────
   const handleConfirmAddPartner = useCallback(async (values: PersonFormValues) => {
     if (modal.type !== 'addPartner') return
     const { personId } = modal
 
-    // Find the root this person belongs to
     const person = people.find(p => p.id === personId)
     if (!person) return
 
-    // Create the new partner person
     const newPartner = await addPerson({
       name: values.name,
       nickname: values.nickname || null,
@@ -186,25 +221,20 @@ export default function TreeLayout({
       root_id: person.root_id,
       is_shortcut: false,
       original_person_id: null,
-      canvas_x: 0,
-      canvas_y: 0,
     })
 
     if (!newPartner) return
 
-    // Link as partners
     await addPartnership(personId, newPartner.id)
     setModal({ type: 'none' })
   }, [modal, people, addPerson, addPartnership])
 
-  // ── Link existing person as partner ──────────────────────────
   const handleLinkExistingPartner = useCallback(async (existingPersonId: string) => {
     if (modal.type !== 'addPartner') return
     await addPartnership(modal.personId, existingPersonId)
     setModal({ type: 'none' })
   }, [modal, addPartnership])
 
-  // ── Confirm add child ────────────────────────────────────────
   const handleConfirmAddChild = useCallback(async (values: PersonFormValues) => {
     if (modal.type !== 'addChild') return
     const { personId } = modal
@@ -218,37 +248,26 @@ export default function TreeLayout({
       birth_date: values.birth_date || null,
       bio: values.bio || null,
       photo_url: null,
-      // If added through the mother, record her as the mother
       mother_id: parent.gender === 'female' ? parent.id : null,
       gender: values.gender || null,
       root_id: parent.root_id,
       is_shortcut: false,
       original_person_id: null,
-      canvas_x: 0,
-      canvas_y: 0,
     })
 
     if (!newChild) return
 
-    // Link as parent→child
     await addParentChild(personId, newChild.id)
     setModal({ type: 'none' })
   }, [modal, people, addPerson, addParentChild])
 
-  // ── Confirm add root ─────────────────────────────────────────
   const handleConfirmAddRoot = useCallback(async (
     rootName: string,
     founderName: string,
   ) => {
-    // Auto-place new root to the right of existing roots
-    const maxX = roots.length > 0
-      ? Math.max(...roots.map(r => r.canvas_x)) + ROOT_SPAWN_OFFSET_X
-      : 100
-
     const newRoot = await addRoot(rootName)
     if (!newRoot) return
 
-    // Create the founder person
     await addPerson({
       name: founderName,
       nickname: null,
@@ -259,41 +278,12 @@ export default function TreeLayout({
       root_id: newRoot.id,
       is_shortcut: false,
       original_person_id: null,
-      canvas_x: maxX,
-      canvas_y: 100,
     })
 
     setModal({ type: 'none' })
+    selectBranch(newRoot.id)
+  }, [addRoot, addPerson, selectBranch])
 
-    // Pan to the center of the new root node
-    setTimeout(() => {
-      panTo(maxX + NODE_WIDTH / 2, 100 + NODE_HEIGHT / 2, viewport.width, viewport.height, true)
-    }, 300)
-  }, [roots, addRoot, addPerson, panTo, viewport])
-
-  // ── Shared: pan + delayed highlight ─────────────────────────
-  const panAndHighlight = useCallback((x: number, y: number, id: string) => {
-    // Pan to the center of the node, not its top-left corner
-    panTo(x + NODE_WIDTH / 2, y + NODE_HEIGHT / 2, viewport.width, viewport.height, true)
-    if (highlightDelayRef.current) clearTimeout(highlightDelayRef.current)
-    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
-    setHighlightedPersonId(null)
-    // Delay so the glow starts after the 600ms pan animation finishes
-    highlightDelayRef.current = setTimeout(() => {
-      setHighlightedPersonId(id)
-      highlightTimerRef.current = setTimeout(() => setHighlightedPersonId(null), 2000)
-    }, 650)
-  }, [panTo, viewport])
-
-  // ── Shortcut navigation ──────────────────────────────────────
-  const handleNavigateToOriginal = useCallback((originalPersonId: string) => {
-    const target = shortcutTargetMap.get(originalPersonId)
-      ?? [...shortcutTargetMap.values()].find(v => v.originalPersonId === originalPersonId)
-    if (!target) return
-    panAndHighlight(target.x, target.y, originalPersonId)
-  }, [shortcutTargetMap, panAndHighlight])
-
-  // ── Remove partner (from reference node) ─────────────────────
   const handleRemovePartner = useCallback(async (ownerPersonId: string, refPersonId: string) => {
     const partnership = partnerships.find(p =>
       (p.person_a_id === ownerPersonId && p.person_b_id === refPersonId) ||
@@ -305,63 +295,108 @@ export default function TreeLayout({
 
   const handleCloseModal = useCallback(() => setModal({ type: 'none' }), [])
 
-  // ── Enrich positioned people with root_name for search ──────
-  const searchablePeople = allPositionedPeople.map(p => ({
-    ...p,
-    root_name: roots.find(r => r.id === p.root_id)?.name ?? undefined,
-  }))
+  const handleExpand = useCallback(() => {
+    setMaxDepth(d => d + EXPAND_INCREMENT)
+  }, [])
 
-  // ── Search select: pan canvas to the person's position ───────
-  const handleSearchSelect = useCallback((x: number, y: number, id: string) => {
-    panAndHighlight(x, y, id)
-  }, [panAndHighlight])
+  // ── People search index, enriched with root name ────────────
+  const searchablePeople = useMemo(() => people
+    .filter(p => !p.is_shortcut)
+    .map(p => ({ ...p, root_name: rootNamesById.get(p.root_id) })),
+    [people, rootNamesById]
+  )
 
   return (
     <>
-      <Canvas
-        canvas={canvas}
-        isEditable={isEditable}
-        people={searchablePeople}
-        roots={roots}
-        partnerships={partnerships}
-        parentChildRows={parentChildRows}
-        onSearchSelect={handleSearchSelect}
-        overlay={isEditable ? (
-          <>
-            <EditToolbar
-              onAddRoot={() => setModal({ type: 'addRoot' })}
-              hasPendingChanges={draft.hasPendingChanges}
-              isSaving={draft.isSaving}
-              saveError={draft.saveError}
-              onSave={draft.saveChanges}
-              adminName={adminName}
-            />
-            <PeopleListPanel
-              people={searchablePeople}
-              parentChildRows={parentChildRows}
-              onNavigate={handleSearchSelect}
-              onDelete={handleDeletePerson}
-              isOwner={isOwner}
-            />
-          </>
-        ) : undefined}
-      >
-        {layoutedRoots.map(lr => (
-          <FamilyRoot
-            key={lr.root.id}
-            layoutedRoot={lr}
-            isEditable={isEditable}
-            highlightedPersonId={highlightedPersonId}
-            activeNodeId={activeNodeId}
-            onClickPerson={handleClickPerson}
-            onActivateNode={handleActivateNode}
-            onAddPartner={handleAddPartner}
-            onAddChild={handleAddChild}
-            onNavigateToOriginal={handleNavigateToOriginal}
-            onRemovePartner={handleRemovePartner}
+      {!isEditable && (
+        <SearchBar people={searchablePeople} onSelectPerson={navigateToPerson} />
+      )}
+
+      {isEditable && (
+        <>
+          <EditToolbar
+            hasPendingChanges={draft.hasPendingChanges}
+            isSaving={draft.isSaving}
+            saveError={draft.saveError}
+            onSave={draft.saveChanges}
+            adminName={adminName}
           />
-        ))}
-      </Canvas>
+          <PeopleListPanel
+            people={searchablePeople}
+            parentChildRows={parentChildRows}
+            onNavigate={navigateToPerson}
+            onDelete={handleDeletePerson}
+            isOwner={isOwner}
+          />
+        </>
+      )}
+
+      {!selectedRoot ? (
+        <BranchPicker
+          roots={roots}
+          people={people}
+          parentChildRows={parentChildRows}
+          isEditable={isEditable}
+          onSelect={selectBranch}
+          onAddRoot={() => setModal({ type: 'addRoot' })}
+        />
+      ) : (
+        <div className="fixed inset-0 flex flex-col">
+          {/* ── Branch header ── */}
+          <div className="flex-shrink-0 flex items-center gap-3 px-5 py-4 bg-white border-b-2 border-slate-200 z-10">
+            <button
+              onClick={backToBranches}
+              className="
+                flex items-center gap-2 px-4 py-2.5 rounded-xl
+                text-walnut hover:bg-parchment
+                font-sans text-base font-semibold
+                transition-colors duration-150
+              "
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M9.5 3L4 8l5.5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              فروع العائلة
+            </button>
+            <span className="font-sans text-xl font-bold text-charcoal">
+              {selectedRoot.name}
+            </span>
+          </div>
+
+          {/* ── Scrollable tree ── */}
+          <div className="branch-scroll flex-1">
+            {layoutedRoot ? (
+              <div
+                className="relative"
+                style={{
+                  width: Math.max(...layoutedRoot.allNodes.map(n => n.x + 160)) + 100,
+                  height: Math.max(...layoutedRoot.allNodes.map(n => n.y + 80)) + 180,
+                }}
+              >
+                <FamilyRoot
+                  layoutedRoot={layoutedRoot}
+                  isEditable={isEditable}
+                  highlightedPersonId={highlightedPersonId}
+                  activeNodeId={activeNodeId}
+                  peopleById={peopleById}
+                  rootNamesById={rootNamesById}
+                  onClickPerson={handleClickPerson}
+                  onActivateNode={handleActivateNode}
+                  onAddPartner={handleAddPartner}
+                  onAddChild={handleAddChild}
+                  onNavigateToOriginal={navigateToPerson}
+                  onRemovePartner={handleRemovePartner}
+                  onExpand={handleExpand}
+                />
+              </div>
+            ) : (
+              <p className="font-sans text-lg text-walnut-light text-center py-16">
+                هذا الفرع فارغ.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Profile popup ── */}
       <ProfilePopup
