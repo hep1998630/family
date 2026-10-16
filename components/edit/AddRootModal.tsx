@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -20,6 +20,8 @@ export default function AddRootModal({
   const [founderName, setFounderName] = useState('')
   const [saving,      setSaving]      = useState(false)
   const [errors,      setErrors]      = useState<{ root?: string; founder?: string }>({})
+  // Blocks a double tap from creating the family twice (see AddPersonModal).
+  const submittingRef = useRef(false)
 
   const reset = () => {
     setRootName('')
@@ -30,16 +32,22 @@ export default function AddRootModal({
   const handleCancel = () => { reset(); onCancel() }
 
   const handleConfirm = async () => {
+    if (submittingRef.current) return
     const newErrors: typeof errors = {}
     if (!rootName.trim())    newErrors.root    = 'اسم العائلة مطلوب'
     if (!founderName.trim()) newErrors.founder = 'اسم المؤسس مطلوب'
 
     if (Object.keys(newErrors).length > 0) { setErrors(newErrors); return }
 
+    submittingRef.current = true
     setSaving(true)
-    await onConfirm(rootName.trim(), founderName.trim())
-    setSaving(false)
-    reset()
+    try {
+      await onConfirm(rootName.trim(), founderName.trim())
+      reset()
+    } finally {
+      submittingRef.current = false
+      setSaving(false)
+    }
   }
 
   return (

@@ -106,14 +106,25 @@ export default function TreeApp({
     if (!person) return
     const neededDepth = computeDepthFromRoot(personId, parentChildRows) + 1
     setMaxDepth(Math.max(DEFAULT_MAX_DEPTH, neededDepth))
-    if (person.root_id !== selectedRootId) setSelectedRootId(person.root_id)
+    if (person.root_id !== effectiveRootIdRef.current) setSelectedRootId(person.root_id)
     setPendingFocusId(personId)
-  }, [peopleById, parentChildRows, selectedRootId, setSelectedRootId])
+  }, [peopleById, parentChildRows, setSelectedRootId])
+
+  // A family created in this session has a temp id until Save writes it;
+  // resolve through the draft so the branch stays open after saving.
+  const { resolveId } = draft
+  const effectiveRootId = selectedRootId && isEditable ? resolveId(selectedRootId) : selectedRootId
+  const effectiveRootIdRef = useRef(effectiveRootId)
+  effectiveRootIdRef.current = effectiveRootId
+
+  useEffect(() => {
+    if (selectedRootId && effectiveRootId !== selectedRootId) setSelectedRootId(effectiveRootId)
+  }, [selectedRootId, effectiveRootId, setSelectedRootId])
 
   // ── Layout for the selected branch only ──────────────────────
   const selectedRoot = useMemo(
-    () => (selectedRootId ? roots.find(r => r.id === selectedRootId) ?? null : null),
-    [roots, selectedRootId]
+    () => (effectiveRootId ? roots.find(r => r.id === effectiveRootId) ?? null : null),
+    [roots, effectiveRootId]
   )
 
   const layoutedRoot = useMemo(() => {

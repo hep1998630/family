@@ -1,0 +1,129 @@
+// lib/draft/mockSupabase.ts
+//
+// A tiny in-memory stand-in for the parts of the Supabase client that
+// lib/draft/saveQueue.ts uses, with failure injection — test-only.
+
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from '@/lib/supabase/types'
+
+type Row = Record<string, unknown>
+type Filter = (r: Row) => boolean
+
+/**
+ * 'before' — the request fails and nothing is written.
+ * 'after'  — the row IS written but the client still sees an error
+ *            (a lost response), the case that makes naive retries
+ *            create duplicates.
+ */
+export type FailureMode = 'before' | 'after'
+
+const UNIQUE_KEYS: Record<string, string[][]> = {
+  roots: [['id']],
+  people: [['id']],
+  partnerships: [['id'], ['person_a_id', 'person_b_id']],
+  parent_child: [['id'], ['parent_id', 'child_id']],
+}
+
+export function createMockDb() {
+  const tables: Record<string, Row[]> = { roots: [], people: [], partnerships: [], parent_child: [] }
+  const failures: { table: string; op: string; mode: FailureMode }[] = []
+  const uploads: string[] = []
+  let storageFailures = 0
+
+  const takeFailure = (table: string, op: string) => {
+    const i = failures.findIndex(f => f.table === table && f.op === op)
+    if (i === -1) return null
+    return failures.splice(i, 1)[0]
+  }
+
+  const parseOr = (expr: string): Filter => {
+    const cond = (c: string): Filter => {
+      const [col, , ...rest] = c.split('.')
+      const val = rest.join('.')
+      return r => r[col] === val
+    }
+    const groups = [...expr.matchAll(/and\(([^)]*)\)/g)].map(m => m[1])
+    if (groups.length > 0) {
+      const ands = groups.map(g => g.split(',').map(cond))
+      return r => ands.some(fs => fs.every(f => f(r)))
+    }
+    const ors = expr.split(',').map(cond)
+    return r => ors.some(f => f(r))
+  }
+
+  class Query {
+    private op: 'select' | 'insert' | 'update' | 'delete' = 'select'
+    private payload: Row = {}
+    private filters: Filter[] = []
+    private limitN = Infinity
+    constructor(private table: string) {}
+    select() { if (this.op !== 'insert') this.op = 'select'; return this }
+    insert(row: Row) { this.op = 'insert'; this.payload = row; return this }
+    update(v: Row) { this.op = 'update'; this.payload = v; return this }
+    delete() { this.op = 'delete'; return this }
+    eq(col: string, val: unknown) { this.filters.push(r => r[col] === val); return this }
+    or(expr: string) { this.filters.push(parseOr(expr)); return this }
+    limit(n: number) { this.limitN = n; return this }
+    then<T>(resolve: (v: { data: unknown; error: { message: string; code?: string } | null }) => T, reject?: (e: unknown) => T) {
+      return Promise.resolve().then(() => this.exec()).then(resolve, reject)
+    }
+    private exec() {
+      const rows = tables[this.table]
+      const match = (r: Row) => this.filters.every(f => f(r))
+      const failure = this.op === 'select' ? null : takeFailure(this.table, this.op)
+      if (failure?.mode === 'before') {
+        return { data: null, error: { message: `injected ${this.op} failure on ${this.table}` } }
+      }
+
+      let result: { data: unknown; error: { message: string; code?: string } | null }
+      if (this.op === 'insert') {
+        const clash = (UNIQUE_KEYS[this.table] ?? []).some(cols =>
+          rows.some(r => cols.every(c => r[c] === this.payload[c])))
+        if (clash) {
+          result = { data: null, error: { message: 'duplicate key value violates unique constraint', code: '23505' } }
+        } else {
+          rows.push({ ...this.payload })
+          result = { data: null, error: null }
+        }
+      } else if (this.op === 'update') {
+        rows.filter(match).forEach(r => Object.assign(r, this.payload))
+        result = { data: null, error: null }
+      } else if (this.op === 'delete') {
+        tables[this.table] = rows.filter(r => !match(r))
+        result = { data: null, error: null }
+      } else {
+        result = { data: rows.filter(match).slice(0, this.limitN).map(r => ({ ...r })), error: null }
+      }
+
+      if (failure?.mode === 'after') {
+        return { data: null, error: { message: `injected lost response for ${this.op} on ${this.table}` } }
+      }
+      return result
+    }
+  }
+
+  const client = {
+    from: (table: string) => new Query(table),
+    storage: {
+      from: () => ({
+        upload: async (path: string) => {
+          if (storageFailures > 0) {
+            storageFailures -= 1
+            return { error: { message: 'injected upload failure' } }
+          }
+          uploads.push(path)
+          return { error: null }
+        },
+        getPublicUrl: (path: string) => ({ data: { publicUrl: `https://cdn.example/${path}` } }),
+      }),
+    },
+  } as unknown as SupabaseClient<Database>
+
+  return {
+    client,
+    tables,
+    uploads,
+    failNext: (table: string, op: string, mode: FailureMode = 'before') => failures.push({ table, op, mode }),
+    failNextUpload: () => { storageFailures += 1 },
+  }
+}

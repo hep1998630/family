@@ -87,14 +87,20 @@ export default function EditToolbar({
 
             {/* Save error message */}
             {saveError && !isSaving && (
-                <p className="
-                    font-sans text-base font-medium text-red-700
-                    bg-white border-2 border-red-300
-                    rounded-xl px-5 py-3 shadow-sm
-                    max-w-xs text-right
-                ">
-                    {saveError}
-                </p>
+                <div
+                    role="alert"
+                    className="
+                        font-sans text-base font-medium text-red-700
+                        bg-white border-2 border-red-300
+                        rounded-xl px-5 py-3 shadow-sm
+                        max-w-xs text-right flex flex-col gap-1
+                    "
+                >
+                    <p>تعذّر حفظ بعض التغييرات. حاول مرة أخرى — ما تم حفظه لن يتكرر.</p>
+                    <p dir="ltr" className="text-sm font-normal text-red-600 text-left break-words">
+                        {saveError}
+                    </p>
+                </div>
             )}
         </div>
     )

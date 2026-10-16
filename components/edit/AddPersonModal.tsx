@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import Avatar from '@/components/ui/Avatar'
@@ -46,6 +46,9 @@ export default function AddPersonModal({
   onCancel,
 }: AddPersonModalProps) {
   const [saving, setSaving] = useState(false)
+  // A double tap can fire the confirm handler twice before `saving`
+  // re-renders the button as disabled — this ref blocks the second call.
+  const submittingRef = useRef(false)
 
   const [partnerTab, setPartnerTab] = useState<'existing' | 'new'>('existing')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -70,18 +73,30 @@ export default function AddPersonModal({
   const handleCancel = () => { onCancel() }
 
   const handleConfirmNew = async () => {
+    if (submittingRef.current) return
     if (!values.name.trim()) { setNameError('الاسم مطلوب'); return }
     setNameError('')
+    submittingRef.current = true
     setSaving(true)
-    await onConfirm(values)
-    setSaving(false)
+    try {
+      await onConfirm(values)
+    } finally {
+      submittingRef.current = false
+      setSaving(false)
+    }
   }
 
   const handleConfirmExisting = async () => {
+    if (submittingRef.current) return
     if (!selectedId || !onLinkExisting) return
+    submittingRef.current = true
     setSaving(true)
-    await onLinkExisting(selectedId)
-    setSaving(false)
+    try {
+      await onLinkExisting(selectedId)
+    } finally {
+      submittingRef.current = false
+      setSaving(false)
+    }
   }
 
   const rootsMap = useMemo(
