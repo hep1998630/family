@@ -171,20 +171,29 @@ function buildTreeNode(
     .flatMap(pn => childrenMap.get(pn.person.id) ?? [])
   const allChildIds = [...new Set([...ownChildIds, ...partnerChildIds])]
 
+  // A child is linked to both parents, so it can be reached from either one.
+  // Only draw it in its own branch (a mother who married in from another
+  // family must not pull her children into her birth family's tree), and
+  // only once (the visited check below runs per child, right before it is
+  // built, so a sibling's subtree that already placed it wins).
   const unvisitedChildren = allChildIds
     .map(cid => peopleById.get(cid))
-    .filter((p): p is PersonRow => !!p && !visited.has(p.id))
+    .filter((p): p is PersonRow => !!p && !visited.has(p.id) && p.root_id === person.root_id)
 
   // Depth cap reached and there's real children below: stop recursing and
   // flag this node so the UI can offer a "show more generations" action
   // instead of silently dropping people from the tree.
   const truncated = unvisitedChildren.length > 0 && depth >= maxDepth
 
-  const childNodes: TreeNode[] = truncated
-    ? []
-    : unvisitedChildren.map(p =>
+  const childNodes: TreeNode[] = []
+  if (!truncated) {
+    for (const p of unvisitedChildren) {
+      if (visited.has(p.id)) continue
+      childNodes.push(
         buildTreeNode(p, peopleById, partnerMap, childrenMap, childIdsSet, visited, depth + 1, maxDepth)
       )
+    }
+  }
 
   return { person, x: 0, y: 0, partners: partnerNodes, children: childNodes, truncated }
 }

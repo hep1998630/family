@@ -141,4 +141,20 @@ describe('runSaveQueue', () => {
     expect(db.tables.people[0].photo_url).toBe(`https://cdn.example/${realId}.jpg`)
     expect(db.uploads).toEqual([`${realId}.jpg`])
   })
+
+  it('replacing a parent link removes the old row and adds the new one, safely on retry', async () => {
+    const db = createMockDb()
+    db.tables.parent_child.push({ id: 'old-link', parent_id: 'mother', child_id: 'kid' })
+    const d = makeDraft(db)
+    d.add({ type: 'addParentChild', tempId: 'temp_pc', realId: newUuid(), parentId: 'father', childId: 'kid' })
+    d.add({ type: 'removeParentChild', id: 'old-link' })
+    d.add({ type: 'addParentChild', tempId: 'temp_pc2', realId: newUuid(), parentId: 'mother2', childId: 'kid' })
+
+    db.failNext('parent_child', 'delete')
+    await expect(d.save()).rejects.toThrow()
+    await d.save()
+
+    const links = db.tables.parent_child.map(r => `${r.parent_id}>${r.child_id}`).sort()
+    expect(links).toEqual(['father>kid', 'mother2>kid'])
+  })
 })

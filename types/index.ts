@@ -83,5 +83,7 @@ export type PersonFormValues = {
   bio: string
   photo_url: string
   mother_id: string | null
+  /** Only used by forms that set a person's parents (add child, edit profile). */
+  father_id: string | null
   gender: 'male' | 'female' | ''
 }

@@ -26,6 +26,7 @@ export type PendingOp = { opId: string } & (
   | { type: 'addPartnership'; tempId: string; realId: string; personAId: string; personBId: string }
   | { type: 'removePartnership'; id: string }
   | { type: 'addParentChild'; tempId: string; realId: string; parentId: string; childId: string }
+  | { type: 'removeParentChild'; id: string }
   | { type: 'updatePerson'; id: string; updates: UpdatePerson }
   | { type: 'deletePerson'; id: string }
 )
@@ -71,6 +72,8 @@ export function remapOp(op: PendingOp, from: string, to: string): PendingOp {
       return { ...op, id: m(op.id) }
     case 'addParentChild':
       return { ...op, parentId: m(op.parentId), childId: m(op.childId) }
+    case 'removeParentChild':
+      return { ...op, id: m(op.id) }
     case 'updatePerson':
       return {
         ...op,
@@ -227,6 +230,13 @@ export async function runSaveQueue(deps: SaveQueueDeps): Promise<void> {
         }
         done()
         resolved(op.tempId, realId)
+        break
+      }
+
+      case 'removeParentChild': {
+        const { error } = await client.from('parent_child').delete().eq('id', r(op.id))
+        if (error) throw new Error(error.message)
+        done()
         break
       }
 
