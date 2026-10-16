@@ -147,7 +147,10 @@ try {
     check(copied === `${app}/view?view=${viewKids.id}`, `desktop مشاركة copies the link (${copied})`)
 
     await page.getByRole('button', { name: 'كل العروض' }).click()
-    check(await page.locator('[data-view-card]').count() === 2, '«كل العروض» lists both views')
+    // Let the URL change (and the page's server re-render) finish: it must not reset the tab.
+    await page.waitForURL(u => u.search.startsWith('?root='), { timeout: 15_000 })
+    await page.waitForTimeout(1500)
+    check(await page.locator('[data-view-card]').count() === 2, '«كل العروض» lists both views, and stays there after the URL updates')
     check(await page.getByRole('button', { name: 'العروض', exact: true }).getAttribute('aria-pressed') === 'true', 'third tab «العروض» is selected')
 
     await page.getByRole('button', { name: 'الشجرة', exact: true }).click()

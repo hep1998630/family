@@ -185,14 +185,17 @@ export default function TreeApp({
   const [viewMode, setViewModeState] = useState<ViewMode | null>(null)
   // The family/tree choice to return to when leaving the saved views.
   const defaultModeRef = useRef<DefaultViewMode>('tree')
+  // Only the first load decides: later URL changes (opening/closing a view)
+  // re-render the page with new initial* props, which must not reset the tab.
+  const openedWithViewRef = useRef(!!initialViewId)
   useEffect(() => {
     let saved: string | null = null
     try { saved = window.localStorage.getItem(VIEW_STORAGE_KEY) } catch { /* private mode */ }
     defaultModeRef.current = saved === 'family' || saved === 'tree'
       ? saved
       : window.matchMedia(PHONE_QUERY).matches ? 'family' : 'tree'
-    setViewModeState(initialViewId ? 'views' : defaultModeRef.current)
-  }, [initialViewId])
+    setViewModeState(openedWithViewRef.current ? 'views' : defaultModeRef.current)
+  }, [])
 
   // ── Saved views («العروض») ───────────────────────────────────
   const [savedViews] = useState(() => sortViews(initialSavedViews))
