@@ -1,8 +1,25 @@
 import Link from 'next/link'
+import { createPublicClient } from '@/lib/supabase/server'
+import { loadSavedViews } from '@/lib/views-server'
+import SavedViewCards, { type ViewCardPerson } from '@/components/views/SavedViewCards'
 
-export default function LandingPage() {
+// The saved views can change at any time — render per request, not at build.
+export const dynamic = 'force-dynamic'
+
+export default async function LandingPage() {
+  const supabase = createPublicClient()
+  const views = await loadSavedViews(supabase)
+
+  // Names/photos of the views' top people (and partners) for the cards.
+  const ids = [...new Set(views.flatMap(v => [v.top_person_id, v.partner_id]).filter((x): x is string => !!x))]
+  const people = new Map<string, ViewCardPerson>()
+  if (ids.length > 0) {
+    const { data } = await supabase.from('people').select('id, name, photo_url').in('id', ids)
+    for (const p of data ?? []) people.set(p.id, p)
+  }
+
   return (
-    <main className="min-h-screen bg-parchment flex flex-col items-center justify-center px-6">
+    <main className="min-h-screen bg-parchment flex flex-col items-center justify-center px-6 py-12">
 
       {/* ── Icon ── */}
       <div className="mb-8 animate-fade-up">
@@ -72,6 +89,13 @@ export default function LandingPage() {
           وضع التعديل
         </Link>
       </div>
+
+      {/* ── Saved views: one tap from here ── */}
+      {views.length > 0 && (
+        <div className="w-full max-w-3xl mt-14 animate-fade-up" style={{ animationDelay: '0.3s' }}>
+          <SavedViewCards views={views} personFor={id => people.get(id)} />
+        </div>
+      )}
 
     </main>
   )

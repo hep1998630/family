@@ -5,20 +5,25 @@ import http from 'node:http'
 export const TOKEN = 'mock-access-token'
 export const USER = { id: '00000000-0000-4000-8000-0000000000aa', email: 'owner@example.com', aud: 'authenticated', role: 'authenticated' }
 
-/** Starts the fake on `port` with `seed` rows; resolves to the http.Server. */
-export function startMockSupabase({ port = 54321, seed = {} } = {}) {
+/**
+ * Starts the fake on `port` with `seed` rows; resolves to the http.Server.
+ * `missingTables` answer like a table whose migration hasn't been run.
+ */
+export function startMockSupabase({ port = 54321, seed = {}, missingTables = [] } = {}) {
   const PORT = port
   const db = {
     roots: seed.roots ?? [],
     people: seed.people ?? [],
     partnerships: seed.partnerships ?? [],
     parent_child: seed.parent_child ?? [],
+    saved_views: seed.saved_views ?? [],
     admins: seed.admins ?? [{ id: USER.id, role: 'owner', name: 'المالك', created_at: new Date().toISOString() }],
   }
   const UNIQUE = {
     roots: [['id']], people: [['id']], admins: [['id']],
     partnerships: [['id'], ['person_a_id', 'person_b_id']],
     parent_child: [['id'], ['parent_id', 'child_id']],
+    saved_views: [['id']],
   }
   const failures = [] // { table, method, mode: 'before'|'after' }
   const log = []      // every write, for assertions
@@ -102,7 +107,9 @@ export function startMockSupabase({ port = 54321, seed = {} } = {}) {
     const m = url.pathname.match(/^\/rest\/v1\/([a-z_]+)$/)
     if (!m) return send(res, 404, { message: `no route ${url.pathname}` })
     const table = m[1]
-    if (!db[table]) return send(res, 404, { message: `no table ${table}` })
+    if (!db[table] || missingTables.includes(table)) {
+      return send(res, 404, { message: `Could not find the table 'public.${table}' in the schema cache`, code: 'PGRST205' })
+    }
     const match = filtersFrom(url)
     const accept = req.headers.accept ?? ''
     const prefer = req.headers.prefer ?? ''

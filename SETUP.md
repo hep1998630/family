@@ -2,7 +2,7 @@
 
 ## Applying migrations on a new Supabase project
 
-Run `supabase/migrations/001_initial_schema.sql` through `004_grant_data_api_access.sql`
+Run `supabase/migrations/001_initial_schema.sql` through `005_saved_views.sql`
 **in order** — each one depends on the schema the previous one created.
 This matters more than it used to: since 2026-05-30, new Supabase projects
 no longer auto-grant table access to the `anon`/`authenticated` roles by

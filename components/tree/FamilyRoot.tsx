@@ -24,7 +24,8 @@ interface FamilyRootProps {
   onAddChild: (personId: string) => void
   onNavigateToOriginal: (originalPersonId: string) => void
   onRemovePartner: (ownerPersonId: string, refPersonId: string) => void
-  onExpand: () => void
+  /** Omit to hide the "show more generations" buttons (saved views have a fixed depth). */
+  onExpand?: () => void
 }
 
 export default function FamilyRoot({
@@ -129,7 +130,7 @@ export default function FamilyRoot({
       })}
 
       {/* "Show more generations" affordance for nodes cut off by maxDepth */}
-      {allNodes.filter(n => n.truncated).map(n => (
+      {onExpand && allNodes.filter(n => n.truncated).map(n => (
         <ShowMoreButton
           key={`more-${n.person.id}`}
           x={n.x}

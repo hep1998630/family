@@ -158,6 +158,44 @@ export type Database = {
         }
         Relationships: []
       }
+      saved_views: {
+        Row: {
+          id: string
+          name: string
+          top_person_id: string
+          /** Generations below the top person; null = all. */
+          depth: number | null
+          /** Only this marriage of the top person; null = all partners. */
+          partner_id: string | null
+          sort_order: number
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          top_person_id: string
+          depth?: number | null
+          partner_id?: string | null
+          sort_order?: number
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          top_person_id?: string
+          depth?: number | null
+          partner_id?: string | null
+          sort_order?: number
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       people_with_root: {
@@ -229,12 +267,14 @@ export type PersonRow = Tables<'people'>
 export type PartnershipRow = Tables<'partnerships'>
 export type ParentChildRow = Tables<'parent_child'>
 export type AdminRow = Tables<'admins'>
+export type SavedViewRow = Tables<'saved_views'>
 
 // Insert types
 export type InsertRoot = InsertTables<'roots'>
 export type InsertPerson = InsertTables<'people'>
 export type InsertPartnership = InsertTables<'partnerships'>
 export type InsertParentChild = InsertTables<'parent_child'>
+export type InsertSavedView = InsertTables<'saved_views'>
 
 // Update types
 export type UpdatePerson = UpdateTables<'people'>
