@@ -4,6 +4,7 @@ import { createPublicClient } from '@/lib/supabase/server'
 import TreeApp from '@/components/branch/TreeApp'
 import NotAnAdmin from '@/components/auth/NotAnAdmin'
 import ServerConfigError from '@/components/auth/ServerConfigError'
+import { readAuthHeader } from '@/lib/auth/headers'
 
 export default async function EditPage({
   searchParams,
@@ -16,10 +17,10 @@ export default async function EditPage({
   // must not independently re-check auth.getUser() / query `admins`.
   const headerList = await headers()
   const userId = headerList.get('x-user-id')
-  const userEmail = headerList.get('x-user-email')
+  const userEmail = readAuthHeader(headerList, 'x-user-email')
   const adminRole = headerList.get('x-admin-role') as 'owner' | 'editor' | null
-  const adminName = headerList.get('x-admin-name')
-  const adminError = headerList.get('x-admin-error')
+  const adminName = readAuthHeader(headerList, 'x-admin-name')
+  const adminError = readAuthHeader(headerList, 'x-admin-error')
 
   if (!userId) redirect('/login')
   if (adminError) return <ServerConfigError />
