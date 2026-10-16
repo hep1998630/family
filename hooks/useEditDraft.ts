@@ -2,32 +2,21 @@
 
 import { useCallback, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { newUuid, runSaveQueue, type NewPendingOp, type PendingOp } from '@/lib/draft/saveQueue'
 import type {
   PersonRow, RootRow, PartnershipRow, ParentChildRow,
   InsertPerson, UpdatePerson,
 } from '@/lib/supabase/types'
 
-type PendingOp =
-  | { type: 'addRoot'; tempId: string; name: string }
-  | { type: 'addPerson'; tempId: string; data: InsertPerson }
-  | { type: 'addPartnership'; tempId: string; personAId: string; personBId: string }
-  | { type: 'removePartnership'; id: string }
-  | { type: 'addParentChild'; parentId: string; childId: string }
-  | { type: 'updatePerson'; id: string; updates: UpdatePerson }
-  | { type: 'deletePerson'; id: string }
-
 function makeTempId() {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return `temp_${crypto.randomUUID()}`
-  }
-  // Fallback for non-secure contexts (e.g. HTTP on local network)
-  return `temp_${Date.now()}_${Math.random().toString(36).slice(2)}`
+  return `temp_${newUuid()}`
 }
 
 /**
  * Manages all edit-mode state locally without writing to the DB until
  * saveChanges() is called. Operations return immediately with temp IDs
- * so the UI stays responsive.
+ * so the UI stays responsive. See lib/draft/saveQueue.ts for why a Save
+ * that fails partway can be retried safely.
  */
 export function useEditDraft(
   initialRoots: RootRow[],
@@ -39,14 +28,34 @@ export function useEditDraft(
   const [people, setPeople] = useState<PersonRow[]>(initialPeople)
   const [partnerships, setPartnerships] = useState<PartnershipRow[]>(initialPartnerships)
   const [parentChildRows, setParentChildRows] = useState<ParentChildRow[]>(initialParentChild)
-  const [pendingOps, setPendingOps] = useState<PendingOp[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
-  // Mutable ref — never needs to trigger re-renders
+  // The queue lives in a ref so the save loop always sees the current
+  // queue (not a stale render's copy) and survives across save attempts.
+  // `opCount` mirrors its length purely to trigger re-renders.
+  const opsRef = useRef<PendingOp[]>([])
+  const [opCount, setOpCount] = useState(0)
+  const idMapRef = useRef<Map<string, string>>(new Map())
+  const savingRef = useRef(false)
   const pendingPhotos = useRef<Map<string, { file: File; blobUrl: string }>>(new Map())
 
   const supabase = createClient()
+
+  const mutateOps = useCallback((fn: (ops: PendingOp[]) => PendingOp[]) => {
+    opsRef.current = fn(opsRef.current)
+    setOpCount(opsRef.current.length)
+  }, [])
+
+  /** The op currently being written by an in-flight save — never merge into it. */
+  const isInFlight = useCallback(
+    (op: PendingOp) => savingRef.current && opsRef.current[0] === op,
+    [],
+  )
+
+  const enqueue = useCallback((op: NewPendingOp) => {
+    mutateOps(ops => [...ops, { ...op, opId: newUuid() } as PendingOp])
+  }, [mutateOps])
 
   // ── addRoot ─────────────────────────────────────────────────
   const addRoot = useCallback(async (name: string): Promise<RootRow | null> => {
@@ -54,9 +63,9 @@ export function useEditDraft(
     const t = new Date().toISOString()
     const temp: RootRow = { id: tempId, name, canvas_x: 0, canvas_y: 0, created_at: t, updated_at: t }
     setRoots(prev => [...prev, temp])
-    setPendingOps(prev => [...prev, { type: 'addRoot', tempId, name }])
+    enqueue({ type: 'addRoot', tempId, realId: newUuid(), name })
     return temp
-  }, [])
+  }, [enqueue])
 
   // ── addPerson ───────────────────────────────────────────────
   const addPerson = useCallback(async (data: InsertPerson): Promise<PersonRow | null> => {
@@ -80,55 +89,58 @@ export function useEditDraft(
       updated_at: t,
     }
     setPeople(prev => [...prev, temp])
-    setPendingOps(prev => [...prev, { type: 'addPerson', tempId, data }])
+    enqueue({ type: 'addPerson', tempId, realId: newUuid(), data })
     return temp
-  }, [])
+  }, [enqueue])
 
   // ── addPartnership ──────────────────────────────────────────
   const addPartnership = useCallback(async (
     personAId: string,
     personBId: string,
   ): Promise<PartnershipRow | null> => {
-    const [a, b] = [personAId, personBId].sort()
     const tempId = makeTempId()
     const temp: PartnershipRow = {
       id: tempId,
-      person_a_id: a,
-      person_b_id: b,
+      person_a_id: personAId,
+      person_b_id: personBId,
       created_at: new Date().toISOString(),
     }
     setPartnerships(prev => [...prev, temp])
-    setPendingOps(prev => [...prev, { type: 'addPartnership', tempId, personAId: a, personBId: b }])
+    enqueue({ type: 'addPartnership', tempId, realId: newUuid(), personAId, personBId })
     return temp
-  }, [])
+  }, [enqueue])
 
   // ── removePartnership ───────────────────────────────────────
   const removePartnership = useCallback(async (id: string): Promise<boolean> => {
     setPartnerships(prev => prev.filter(p => p.id !== id))
-    if (id.startsWith('temp_')) {
-      // Cancel the matching addPartnership pending op instead of writing a delete
-      setPendingOps(prev => prev.filter(op => !(op.type === 'addPartnership' && op.tempId === id)))
+    const queued = opsRef.current.find(op => op.type === 'addPartnership' && op.tempId === id)
+    if (queued && !isInFlight(queued)) {
+      // Never written — just cancel it.
+      mutateOps(ops => ops.filter(op => op !== queued))
     } else {
-      setPendingOps(prev => [...prev, { type: 'removePartnership', id }])
+      // Already written (or being written right now) — delete it. A temp id
+      // here is remapped to the real one once that write resolves.
+      enqueue({ type: 'removePartnership', id })
     }
     return true
-  }, [])
+  }, [enqueue, mutateOps, isInFlight])
 
   // ── addParentChild ──────────────────────────────────────────
   const addParentChild = useCallback(async (
     parentId: string,
     childId: string,
   ): Promise<ParentChildRow | null> => {
+    const tempId = makeTempId()
     const temp: ParentChildRow = {
-      id: makeTempId(),
+      id: tempId,
       parent_id: parentId,
       child_id: childId,
       created_at: new Date().toISOString(),
     }
     setParentChildRows(prev => [...prev, temp])
-    setPendingOps(prev => [...prev, { type: 'addParentChild', parentId, childId }])
+    enqueue({ type: 'addParentChild', tempId, realId: newUuid(), parentId, childId })
     return temp
-  }, [])
+  }, [enqueue])
 
   // ── updatePerson ────────────────────────────────────────────
   const updatePerson = useCallback(async (
@@ -136,27 +148,29 @@ export function useEditDraft(
     updates: UpdatePerson,
   ): Promise<boolean> => {
     setPeople(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p))
-    setPendingOps(prev => {
-      // If this person was added in this session, merge into the addPerson op
-      const addIdx = prev.findIndex(op => op.type === 'addPerson' && op.tempId === id)
+    mutateOps(prev => {
+      // If this person hasn't been written yet, fold the edit into its insert.
+      const addIdx = prev.findIndex(op =>
+        op.type === 'addPerson' && op.tempId === id && !isInFlight(op))
       if (addIdx !== -1) {
         const ops = [...prev]
         const addOp = ops[addIdx] as Extract<PendingOp, { type: 'addPerson' }>
         ops[addIdx] = { ...addOp, data: { ...addOp.data, ...updates } }
         return ops
       }
-      // Merge into an existing updatePerson op for this id
-      const updateIdx = prev.findIndex(op => op.type === 'updatePerson' && op.id === id)
+      // Merge into an existing (not in-flight) update for this person.
+      const updateIdx = prev.findIndex(op =>
+        op.type === 'updatePerson' && op.id === id && !isInFlight(op))
       if (updateIdx !== -1) {
         const ops = [...prev]
         const updateOp = ops[updateIdx] as Extract<PendingOp, { type: 'updatePerson' }>
         ops[updateIdx] = { ...updateOp, updates: { ...updateOp.updates, ...updates } }
         return ops
       }
-      return [...prev, { type: 'updatePerson', id, updates }]
+      return [...prev, { opId: newUuid(), type: 'updatePerson', id, updates }]
     })
     return true
-  }, [])
+  }, [mutateOps, isInFlight])
 
   // ── uploadPhoto — deferred, returns a blob URL for preview ──
   const uploadPhoto = useCallback(async (
@@ -173,37 +187,30 @@ export function useEditDraft(
   // ── deletePerson ────────────────────────────────────────────
   const deletePerson = useCallback(async (id: string): Promise<boolean> => {
     setPeople(prev => prev.filter(p => p.id !== id))
-    if (id.startsWith('temp_')) {
-      // Cancel all pending ops for this temp person and clean up
-      setPendingOps(prev => prev.filter(op => {
+    setPartnerships(prev => prev.filter(p => p.person_a_id !== id && p.person_b_id !== id))
+    setParentChildRows(prev => prev.filter(r => r.parent_id !== id && r.child_id !== id))
+    const photo = pendingPhotos.current.get(id)
+    if (photo) { URL.revokeObjectURL(photo.blobUrl); pendingPhotos.current.delete(id) }
+
+    const queuedInsert = opsRef.current.find(op => op.type === 'addPerson' && op.tempId === id)
+    const neverWritten = !!queuedInsert && !isInFlight(queuedInsert)
+
+    mutateOps(prev => {
+      // Drop every not-yet-started op that involves this person…
+      const filtered = prev.filter(op => {
+        if (isInFlight(op)) return true
         if (op.type === 'addPerson' && op.tempId === id) return false
         if (op.type === 'addPartnership' && (op.personAId === id || op.personBId === id)) return false
         if (op.type === 'addParentChild' && (op.parentId === id || op.childId === id)) return false
         if (op.type === 'updatePerson' && op.id === id) return false
+        if (op.type === 'uploadPhoto' && op.personId === id) return false
         return true
-      }))
-      const entry = pendingPhotos.current.get(id)
-      if (entry) { URL.revokeObjectURL(entry.blobUrl); pendingPhotos.current.delete(id) }
-      setPartnerships(prev => prev.filter(p => p.person_a_id !== id && p.person_b_id !== id))
-      setParentChildRows(prev => prev.filter(r => r.parent_id !== id && r.child_id !== id))
-    } else {
-      // Real person: cancel any pending ops that reference them, clean local state
-      setPendingOps(prev => {
-        const filtered = prev.filter(op => {
-          if (op.type === 'updatePerson' && op.id === id) return false
-          if (op.type === 'addPartnership' && (op.personAId === id || op.personBId === id)) return false
-          if (op.type === 'addParentChild' && op.childId === id) return false
-          return true
-        })
-        return [...filtered, { type: 'deletePerson', id }]
       })
-      setPartnerships(prev => prev.filter(p => p.person_a_id !== id && p.person_b_id !== id))
-      setParentChildRows(prev => prev.filter(r => r.child_id !== id))
-      const entry = pendingPhotos.current.get(id)
-      if (entry) { URL.revokeObjectURL(entry.blobUrl); pendingPhotos.current.delete(id) }
-    }
+      // …and, unless it was never written at all, delete the row too.
+      return neverWritten ? filtered : [...filtered, { opId: newUuid(), type: 'deletePerson', id }]
+    })
     return true
-  }, [])
+  }, [mutateOps, isInFlight])
 
   // ── hasConnections helper ───────────────────────────────────
   const hasConnections = useCallback((
@@ -215,163 +222,75 @@ export function useEditDraft(
       || pc.some(r => r.parent_id === personId || r.child_id === personId)
   }, [])
 
-  // ── saveChanges — flush all pending ops to Supabase ─────────
+  // ── Rewrite local state once a temp row has a real one ──────
+  const applyIdMapping = useCallback((tempId: string, realId: string) => {
+    const m = (id: string) => (id === tempId ? realId : id)
+    setRoots(prev => prev.map(r => (r.id === tempId ? { ...r, id: realId } : r)))
+    setPeople(prev => prev.map(p => ({
+      ...p,
+      id: m(p.id),
+      root_id: m(p.root_id),
+      mother_id: p.mother_id ? m(p.mother_id) : p.mother_id,
+      original_person_id: p.original_person_id ? m(p.original_person_id) : p.original_person_id,
+    })))
+    setPartnerships(prev => prev.map(p => ({
+      ...p, id: m(p.id), person_a_id: m(p.person_a_id), person_b_id: m(p.person_b_id),
+    })))
+    setParentChildRows(prev => prev.map(r => ({
+      ...r, id: m(r.id), parent_id: m(r.parent_id), child_id: m(r.child_id),
+    })))
+    const photo = pendingPhotos.current.get(tempId)
+    if (photo) {
+      pendingPhotos.current.delete(tempId)
+      pendingPhotos.current.set(realId, photo)
+    }
+  }, [])
+
+  /** Maps a temp id to its real id once it has been saved (identity otherwise). */
+  const resolveId = useCallback((id: string) => idMapRef.current.get(id) ?? id, [])
+
+  // ── saveChanges — flush pending ops to Supabase ─────────────
   const saveChanges = useCallback(async (): Promise<boolean> => {
+    // Guards against a double click firing two concurrent saves — React
+    // state (isSaving) doesn't update fast enough to stop the second one.
+    if (savingRef.current) return false
+    savingRef.current = true
     setIsSaving(true)
     setSaveError(null)
 
-    const tempToReal = new Map<string, string>()
-    const resolve = (id: string) => tempToReal.get(id) ?? id
-    const photos = pendingPhotos.current
-
     try {
-      for (const op of pendingOps) {
-        switch (op.type) {
-
-          case 'addRoot': {
-            const { data, error } = await supabase
-              .from('roots')
-              .insert({ name: op.name, canvas_x: 0, canvas_y: 0 })
-              .select().single()
-            if (error) throw new Error(error.message)
-            tempToReal.set(op.tempId, data.id)
-            setRoots(prev => prev.map(r => r.id === op.tempId ? { ...r, id: data.id } : r))
-            break
-          }
-
-          case 'addPerson': {
-            const photoEntry = photos.get(op.tempId)
-            const { data, error } = await supabase
-              .from('people')
-              .insert({
-                ...op.data,
-                root_id: resolve(op.data.root_id),
-                mother_id: op.data.mother_id ? resolve(op.data.mother_id) : null,
-                original_person_id: op.data.original_person_id
-                  ? resolve(op.data.original_person_id) : null,
-                // Never persist a blob URL — photo uploaded separately below
-                photo_url: photoEntry || op.data.photo_url?.startsWith('blob:')
-                  ? null
-                  : (op.data.photo_url ?? null),
-              })
-              .select().single()
-            if (error) throw new Error(error.message)
-            tempToReal.set(op.tempId, data.id)
-            setPeople(prev => prev.map(p => p.id === op.tempId ? { ...p, id: data.id } : p))
-
-            if (photoEntry) {
-              const realId = data.id
-              const ext = photoEntry.file.name.split('.').pop()
-              const path = `${realId}.${ext}`
-              const { error: upErr } = await supabase.storage
-                .from('avatars').upload(path, photoEntry.file, { upsert: true })
-              if (upErr) throw new Error(upErr.message)
-              const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path)
-              await supabase.from('people').update({ photo_url: urlData.publicUrl }).eq('id', realId)
-              setPeople(prev => prev.map(p =>
-                p.id === realId ? { ...p, photo_url: urlData.publicUrl } : p
-              ))
-            }
-            break
-          }
-
-          case 'addPartnership': {
-            const { error } = await supabase
-              .from('partnerships')
-              .insert({ person_a_id: resolve(op.personAId), person_b_id: resolve(op.personBId) })
-            if (error) throw new Error(error.message)
-            break
-          }
-
-          case 'removePartnership': {
-            const { error } = await supabase
-              .from('partnerships')
-              .delete()
-              .eq('id', op.id)
-            if (error) throw new Error(error.message)
-            break
-          }
-
-          case 'addParentChild': {
-            const { error } = await supabase
-              .from('parent_child')
-              .insert({ parent_id: resolve(op.parentId), child_id: resolve(op.childId) })
-            if (error) throw new Error(error.message)
-            break
-          }
-
-          case 'updatePerson': {
-            const realId = resolve(op.id)
-            const photoEntry = photos.get(op.id)
-            let updates = { ...op.updates }
-
-            if (photoEntry) {
-              const ext = photoEntry.file.name.split('.').pop()
-              const path = `${realId}.${ext}`
-              const { error: upErr } = await supabase.storage
-                .from('avatars').upload(path, photoEntry.file, { upsert: true })
-              if (upErr) throw new Error(upErr.message)
-              const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path)
-              updates = { ...updates, photo_url: urlData.publicUrl }
-              setPeople(prev => prev.map(p =>
-                p.id === realId || p.id === op.id
-                  ? { ...p, photo_url: urlData.publicUrl }
-                  : p
-              ))
-            } else if (updates.photo_url?.startsWith('blob:')) {
-              // Blob URL with no matching file — drop the field to avoid persisting it
-              const { photo_url: _dropped, ...rest } = updates
-              updates = rest
-            }
-
-            const { error } = await supabase.from('people').update(updates).eq('id', realId)
-            if (error) throw new Error(error.message)
-            break
-          }
-
-          case 'deletePerson': {
-            await supabase.from('partnerships').delete()
-              .or(`person_a_id.eq.${op.id},person_b_id.eq.${op.id}`)
-            await supabase.from('parent_child').delete().eq('child_id', op.id)
-            const { error } = await supabase.from('people').delete().eq('id', op.id)
-            if (error) throw new Error(error.message)
-            break
-          }
-        }
-      }
-
-      // Replace any remaining temp IDs in relationship rows
-      setPartnerships(prev => prev.map(p => ({
-        ...p,
-        person_a_id: resolve(p.person_a_id),
-        person_b_id: resolve(p.person_b_id),
-      })))
-      setParentChildRows(prev => prev.map(r => ({
-        ...r,
-        parent_id: resolve(r.parent_id),
-        child_id: resolve(r.child_id),
-      })))
-
-      photos.forEach(({ blobUrl }) => URL.revokeObjectURL(blobUrl))
-      photos.clear()
-      setPendingOps([])
+      await runSaveQueue({
+        client: supabase,
+        queue: opsRef,
+        idMap: idMapRef.current,
+        getPhoto: id => pendingPhotos.current.get(id)?.file,
+        onQueueChange: () => setOpCount(opsRef.current.length),
+        onResolved: applyIdMapping,
+        onPhotoUploaded: (personId, url) => {
+          const entry = pendingPhotos.current.get(personId)
+          if (entry) { URL.revokeObjectURL(entry.blobUrl); pendingPhotos.current.delete(personId) }
+          setPeople(prev => prev.map(p => (p.id === personId ? { ...p, photo_url: url } : p)))
+        },
+      })
       return true
-
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Unknown error saving changes')
+      setSaveError(err instanceof Error ? err.message : String(err))
       return false
     } finally {
+      savingRef.current = false
       setIsSaving(false)
+      setOpCount(opsRef.current.length)
     }
-  }, [pendingOps, supabase])
+  }, [supabase, applyIdMapping])
 
   return {
     roots, people, partnerships, parentChildRows,
     addRoot, addPerson, addPartnership, removePartnership, addParentChild,
     updatePerson, uploadPhoto, deletePerson, hasConnections,
     saveChanges,
+    resolveId,
     isSaving,
     saveError,
-    hasPendingChanges: pendingOps.length > 0,
+    hasPendingChanges: opCount > 0,
   }
 }
