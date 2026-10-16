@@ -6,6 +6,7 @@ import ProfileView from '@/components/popup/ProfileView'
 import ProfileEdit from '@/components/popup/ProfileEdit'
 import type { PersonRow, PartnershipRow, ParentChildRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
+import type { Lineage } from '@/lib/tree/lineage'
 
 interface ProfilePopupProps {
   personId: string | null
@@ -18,6 +19,7 @@ interface ProfilePopupProps {
   people: PersonRow[]
   partnerships: PartnershipRow[]
   parentChildRows: ParentChildRow[]
+  lineage: Lineage
 
   // Mutations (from usePeople hook)
   onUpdatePerson: (id: string, values: PersonFormValues, photoFile: File | null) => Promise<void>
@@ -33,6 +35,7 @@ export default function ProfilePopup({
   people,
   partnerships,
   parentChildRows,
+  lineage,
   onUpdatePerson,
   onDeletePerson,
 }: ProfilePopupProps) {
@@ -59,7 +62,9 @@ export default function ProfilePopup({
 
     const parentNames   = parentIds.map(id => peopleById.get(id)?.name ?? 'Unknown')
     const childrenNames = childIds.map(id => peopleById.get(id)?.name ?? 'Unknown')
-    const motherName    = person.mother_id
+    // Now that children are linked to both parents, the mother is usually
+    // already in the parents list — only show her separately if she isn't.
+    const motherName    = person.mother_id && !parentIds.includes(person.mother_id)
       ? (peopleById.get(person.mother_id)?.name ?? null)
       : null
 
@@ -131,12 +136,12 @@ export default function ProfilePopup({
           person={person}
           allPeople={people}
           partnerships={partnerships}
-          parentChildRows={parentChildRows}
           onSave={handleSave}
           onCancel={onClose}
           onDelete={handleDelete}
           hasConnections={hasConnections}
           isOwner={isOwner}
+          lineage={lineage}
         />
       ) : (
         <ProfileView

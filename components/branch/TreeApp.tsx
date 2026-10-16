@@ -10,12 +10,14 @@ import AddPersonModal from '@/components/edit/AddPersonModal'
 import AddRootModal from '@/components/edit/AddRootModal'
 import EditToolbar from '@/components/edit/EditToolbar'
 import PeopleListPanel from '@/components/edit/PeopleListPanel'
+import { AskGenderModal, NeedPartnerModal } from '@/components/edit/StepModals'
 import { useRoots } from '@/hooks/useRoots'
 import { usePeople } from '@/hooks/usePeople'
 import { usePartnerships } from '@/hooks/usePartnerships'
 import { useParentChild } from '@/hooks/useParentChild'
 import { useEditDraft } from '@/hooks/useEditDraft'
 import { computeLayout, computeDepthFromRoot } from '@/lib/tree/layout'
+import { buildLineage, closeFamilyIds, partnersOf } from '@/lib/tree/lineage'
 import type { PersonRow, PartnershipRow, ParentChildRow, RootRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
 
@@ -36,8 +38,10 @@ interface TreeAppProps {
 
 type ModalState =
   | { type: 'none' }
-  | { type: 'addPartner'; personId: string; personName: string }
-  | { type: 'addChild'; personId: string; personName: string }
+  | { type: 'addPartner'; personId: string }
+  | { type: 'addChild'; personId: string }
+  | { type: 'needPartner'; personId: string }
+  | { type: 'askGender'; personId: string; next: 'addPartner' | 'addChild' }
   | { type: 'addRoot' }
 
 export default function TreeApp({
@@ -70,6 +74,7 @@ export default function TreeApp({
   const addPartnership     = isEditable ? draft.addPartnership     : livePartnerships.addPartnership
   const removePartnership  = isEditable ? draft.removePartnership  : livePartnerships.removePartnership
   const addParentChild     = isEditable ? draft.addParentChild     : liveParentChild.addParentChild
+  const removeParentChild  = isEditable ? draft.removeParentChild  : liveParentChild.removeParentChild
   const updatePerson    = isEditable ? draft.updatePerson    : livePeople.updatePerson
   const deletePerson    = isEditable ? draft.deletePerson    : livePeople.deletePerson
   const uploadPhoto     = isEditable ? draft.uploadPhoto     : livePeople.uploadPhoto
@@ -77,6 +82,8 @@ export default function TreeApp({
   // ── Lookup maps ───────────────────────────────────────────────
   const peopleById = useMemo(() => new Map(people.map(p => [p.id, p])), [people])
   const rootNamesById = useMemo(() => new Map(roots.map(r => [r.id, r.name])), [roots])
+  // «name fatherName» labels for titles and pickers (see lib/tree/lineage.ts).
+  const lineage = useMemo(() => buildLineage(people, parentChildRows), [people, parentChildRows])
 
   // ── Branch selection + URL sync ───────────────────────────────
   const [selectedRootId, setSelectedRootIdState] = useState<string | null>(initialRootId)
@@ -194,7 +201,17 @@ export default function TreeApp({
       mother_id: values.mother_id || null,
       gender: values.gender || null,
     })
-  }, [updatePerson, uploadPhoto])
+
+    // Make the parent_child rows match the chosen father and mother.
+    const desired = [...new Set([values.father_id, values.mother_id].filter((x): x is string => !!x))]
+    const current = parentChildRows.filter(r => r.child_id === id)
+    for (const row of current) {
+      if (!desired.includes(row.parent_id)) await removeParentChild(row.id)
+    }
+    for (const parentId of desired) {
+      if (!current.some(r => r.parent_id === parentId)) await addParentChild(parentId, id)
+    }
+  }, [updatePerson, uploadPhoto, parentChildRows, removeParentChild, addParentChild])
 
   const handleDeletePerson = useCallback((id: string) => {
     deletePerson(id)
@@ -202,17 +219,33 @@ export default function TreeApp({
     if (activeNodeId === id) setActiveNodeId(null)
   }, [deletePerson, selectedPersonId, activeNodeId])
 
-  const handleAddPartner = useCallback((personId: string) => {
-    const person = people.find(p => p.id === personId)
+  // `gender` lets the ask-gender step continue before `people` re-renders.
+  const handleAddPartner = useCallback((personId: string, gender?: 'male' | 'female') => {
+    const person = peopleById.get(personId)
     if (!person) return
-    setModal({ type: 'addPartner', personId, personName: person.name })
-  }, [people])
+    if (!(gender ?? person.gender)) { setModal({ type: 'askGender', personId, next: 'addPartner' }); return }
+    setModal({ type: 'addPartner', personId })
+  }, [peopleById])
 
-  const handleAddChild = useCallback((personId: string) => {
-    const person = people.find(p => p.id === personId)
+  const handleAddChild = useCallback((personId: string, gender?: 'male' | 'female') => {
+    const person = peopleById.get(personId)
     if (!person) return
-    setModal({ type: 'addChild', personId, personName: person.name })
-  }, [people])
+    if (!(gender ?? person.gender)) { setModal({ type: 'askGender', personId, next: 'addChild' }); return }
+    // A child is always linked to both parents, so a partner must exist first.
+    if (partnersOf(personId, partnerships, peopleById).length === 0) {
+      setModal({ type: 'needPartner', personId })
+      return
+    }
+    setModal({ type: 'addChild', personId })
+  }, [peopleById, partnerships])
+
+  const handlePickGender = useCallback(async (gender: 'male' | 'female') => {
+    if (modal.type !== 'askGender') return
+    const { personId, next } = modal
+    await updatePerson(personId, { gender })
+    if (next === 'addPartner') handleAddPartner(personId, gender)
+    else handleAddChild(personId, gender)
+  }, [modal, updatePerson, handleAddPartner, handleAddChild])
 
   const handleConfirmAddPartner = useCallback(async (values: PersonFormValues) => {
     if (modal.type !== 'addPartner') return
@@ -228,7 +261,8 @@ export default function TreeApp({
       bio: values.bio || null,
       photo_url: null,
       mother_id: null,
-      gender: values.gender || null,
+      // Always the opposite of the person they marry.
+      gender: person.gender === 'male' ? 'female' : person.gender === 'female' ? 'male' : (values.gender || null),
       root_id: person.root_id,
       is_shortcut: false,
       original_person_id: null,
@@ -253,13 +287,17 @@ export default function TreeApp({
     const parent = people.find(p => p.id === personId)
     if (!parent) return
 
+    // The form asked for the other parent; link the child to both.
+    const fatherId = parent.gender === 'female' ? values.father_id : parent.id
+    const motherId = parent.gender === 'female' ? parent.id : values.mother_id
+
     const newChild = await addPerson({
       name: values.name,
       nickname: values.nickname || null,
       birth_date: values.birth_date || null,
       bio: values.bio || null,
       photo_url: null,
-      mother_id: parent.gender === 'female' ? parent.id : null,
+      mother_id: motherId,
       gender: values.gender || null,
       root_id: parent.root_id,
       is_shortcut: false,
@@ -268,7 +306,9 @@ export default function TreeApp({
 
     if (!newChild) return
 
-    await addParentChild(personId, newChild.id)
+    for (const parentId of new Set([fatherId, motherId].filter((x): x is string => !!x))) {
+      await addParentChild(parentId, newChild.id)
+    }
     setModal({ type: 'none' })
   }, [modal, people, addPerson, addParentChild])
 
@@ -305,6 +345,7 @@ export default function TreeApp({
   }, [partnerships, removePartnership])
 
   const handleCloseModal = useCallback(() => setModal({ type: 'none' }), [])
+  const modalPerson = 'personId' in modal ? peopleById.get(modal.personId) ?? null : null
 
   const handleExpand = useCallback(() => {
     setMaxDepth(d => d + EXPAND_INCREMENT)
@@ -419,6 +460,7 @@ export default function TreeApp({
         people={people}
         partnerships={partnerships}
         parentChildRows={parentChildRows}
+        lineage={lineage}
         onUpdatePerson={handleUpdatePerson}
         onDeletePerson={handleDeletePerson}
       />
@@ -427,13 +469,15 @@ export default function TreeApp({
       <AddPersonModal
         isOpen={modal.type === 'addPartner'}
         mode="partner"
-        relativeName={modal.type === 'addPartner' ? modal.personName : ''}
-        currentPerson={modal.type === 'addPartner' ? (people.find(p => p.id === modal.personId) ?? null) : null}
+        relativeName={modalPerson ? lineage.label(modalPerson) : ''}
+        currentPerson={modal.type === 'addPartner' ? modalPerson : null}
+        labelFor={lineage.label}
         allPeople={people}
-        existingPartnerIds={modal.type === 'addPartner'
-          ? partnerships
-              .filter(p => p.person_a_id === modal.personId || p.person_b_id === modal.personId)
-              .map(p => p.person_a_id === modal.personId ? p.person_b_id : p.person_a_id)
+        excludedIds={modal.type === 'addPartner'
+          ? [
+              ...partnersOf(modal.personId, partnerships, peopleById).map(p => p.id),
+              ...closeFamilyIds(modal.personId, parentChildRows),
+            ]
           : []
         }
         roots={roots}
@@ -446,8 +490,28 @@ export default function TreeApp({
       <AddPersonModal
         isOpen={modal.type === 'addChild'}
         mode="child"
-        relativeName={modal.type === 'addChild' ? modal.personName : ''}
+        relativeName={modalPerson ? lineage.label(modalPerson) : ''}
+        currentPerson={modal.type === 'addChild' ? modalPerson : null}
+        labelFor={lineage.label}
+        otherParent={modal.type === 'addChild' && modalPerson ? {
+          role: modalPerson.gender === 'female' ? 'father' : 'mother',
+          options: partnersOf(modalPerson.id, partnerships, peopleById),
+        } : undefined}
         onConfirm={handleConfirmAddChild}
+        onCancel={handleCloseModal}
+      />
+
+      <NeedPartnerModal
+        isOpen={modal.type === 'needPartner'}
+        personName={modalPerson ? lineage.label(modalPerson) : ''}
+        onAddPartner={() => modalPerson && handleAddPartner(modalPerson.id)}
+        onCancel={handleCloseModal}
+      />
+
+      <AskGenderModal
+        isOpen={modal.type === 'askGender'}
+        personName={modalPerson ? lineage.label(modalPerson) : ''}
+        onPick={handlePickGender}
         onCancel={handleCloseModal}
       />
 

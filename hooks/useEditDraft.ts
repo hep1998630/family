@@ -142,6 +142,18 @@ export function useEditDraft(
     return temp
   }, [enqueue])
 
+  // ── removeParentChild ───────────────────────────────────────
+  const removeParentChild = useCallback(async (id: string): Promise<boolean> => {
+    setParentChildRows(prev => prev.filter(r => r.id !== id))
+    const queued = opsRef.current.find(op => op.type === 'addParentChild' && op.tempId === id)
+    if (queued && !isInFlight(queued)) {
+      mutateOps(ops => ops.filter(op => op !== queued))
+    } else {
+      enqueue({ type: 'removeParentChild', id })
+    }
+    return true
+  }, [enqueue, mutateOps, isInFlight])
+
   // ── updatePerson ────────────────────────────────────────────
   const updatePerson = useCallback(async (
     id: string,
@@ -285,7 +297,7 @@ export function useEditDraft(
 
   return {
     roots, people, partnerships, parentChildRows,
-    addRoot, addPerson, addPartnership, removePartnership, addParentChild,
+    addRoot, addPerson, addPartnership, removePartnership, addParentChild, removeParentChild,
     updatePerson, uploadPhoto, deletePerson, hasConnections,
     saveChanges,
     resolveId,
