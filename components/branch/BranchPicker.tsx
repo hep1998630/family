@@ -29,7 +29,7 @@ export default function BranchPicker({
   }), [roots, people, parentChildRows])
 
   return (
-    <div className="min-h-screen bg-parchment px-6 py-16 flex flex-col items-center">
+    <div className="min-h-full bg-parchment px-4 sm:px-6 py-8 sm:py-12 flex flex-col items-center">
       <div className="w-full max-w-3xl flex flex-col items-center">
         <h1 className="font-sans text-3xl sm:text-4xl font-bold text-charcoal text-center mb-2">
           فروع العائلة
