@@ -47,38 +47,40 @@ export default function PeopleListPanel({
     )
   }, [realPeople, search])
 
-  // ── Collapsed: just a toggle button ─────────────────────────
-  if (!isOpen) {
-    return (
-      <button
-        onClick={() => setIsOpen(true)}
-        title="عرض قائمة الأشخاص"
-        className="
-          fixed top-5 left-5 z-30
-          w-12 h-12 rounded-xl
-          bg-white border-2 border-slate-200
-          flex items-center justify-center
-          text-walnut-light hover:text-walnut hover:border-walnut
-          shadow-card transition-colors duration-150
-        "
-      >
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-          <path d="M7 5h11M7 10h11M7 15h11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-          <circle cx="3" cy="5"  r="1.4" fill="currentColor"/>
-          <circle cx="3" cy="10" r="1.4" fill="currentColor"/>
-          <circle cx="3" cy="15" r="1.4" fill="currentColor"/>
-        </svg>
-      </button>
-    )
-  }
+  // ── Toggle button (inline in the top bar) + overlay panel ────
+  const toggle = (
+    <button
+      onClick={() => { setIsOpen(o => !o); setSearch(''); setConfirmId(null) }}
+      title="عرض قائمة الأشخاص"
+      aria-label="قائمة الأشخاص"
+      aria-expanded={isOpen}
+      className={`
+        flex-shrink-0 w-12 h-12 rounded-xl
+        border-2 flex items-center justify-center
+        transition-colors duration-150
+        ${isOpen ? 'bg-walnut border-walnut text-white' : 'bg-white border-slate-200 text-walnut-light hover:text-walnut hover:border-walnut'}
+      `}
+    >
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <path d="M7 5h11M7 10h11M7 15h11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+        <circle cx="3" cy="5"  r="1.4" fill="currentColor"/>
+        <circle cx="3" cy="10" r="1.4" fill="currentColor"/>
+        <circle cx="3" cy="15" r="1.4" fill="currentColor"/>
+      </svg>
+    </button>
+  )
+
+  if (!isOpen) return toggle
 
   // ── Expanded panel ───────────────────────────────────────────
   return (
+    <>
+    {toggle}
     <div
       className="
-        fixed top-5 left-5 z-30
+        fixed top-20 inset-x-3 sm:inset-x-auto sm:left-5 z-30
         flex flex-col
-        w-80 max-h-[calc(100%-7rem)]
+        sm:w-80 max-h-[calc(100%-7rem)]
         bg-white
         border-2 border-slate-200
         rounded-2xl shadow-popup
@@ -251,5 +253,6 @@ export default function PeopleListPanel({
         )}
       </div>
     </div>
+    </>
   )
 }

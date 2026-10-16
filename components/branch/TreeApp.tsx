@@ -8,7 +8,9 @@ import SearchBar from '@/components/branch/SearchBar'
 import ProfilePopup from '@/components/popup/ProfilePopup'
 import AddPersonModal from '@/components/edit/AddPersonModal'
 import AddRootModal from '@/components/edit/AddRootModal'
-import EditToolbar from '@/components/edit/EditToolbar'
+import EditToolbar, { SaveErrorBanner } from '@/components/edit/EditToolbar'
+import FamilyView from '@/components/family/FamilyView'
+import ZoomableTree from '@/components/tree/ZoomableTree'
 import PeopleListPanel from '@/components/edit/PeopleListPanel'
 import { AskGenderModal, NeedPartnerModal } from '@/components/edit/StepModals'
 import { useRoots } from '@/hooks/useRoots'
@@ -16,13 +18,18 @@ import { usePeople } from '@/hooks/usePeople'
 import { usePartnerships } from '@/hooks/usePartnerships'
 import { useParentChild } from '@/hooks/useParentChild'
 import { useEditDraft } from '@/hooks/useEditDraft'
-import { computeLayout, computeDepthFromRoot } from '@/lib/tree/layout'
+import { computeLayout, computeDepthFromRoot, findRootPerson } from '@/lib/tree/layout'
 import { buildLineage, closeFamilyIds, partnersOf } from '@/lib/tree/lineage'
 import type { PersonRow, PartnershipRow, ParentChildRow, RootRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
 
 const DEFAULT_MAX_DEPTH = 3
 const EXPAND_INCREMENT = 2
+/** Below this width the family view is the default. */
+const PHONE_QUERY = '(max-width: 767px)'
+const VIEW_STORAGE_KEY = 'family-tree:view'
+
+type ViewMode = 'family' | 'tree'
 
 interface TreeAppProps {
   isEditable: boolean
@@ -89,6 +96,8 @@ export default function TreeApp({
   const [selectedRootId, setSelectedRootIdState] = useState<string | null>(initialRootId)
   const [maxDepth, setMaxDepth] = useState(DEFAULT_MAX_DEPTH)
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(initialFocusId)
+  // Family view focus stack; empty means the branch founder.
+  const [familyHistory, setFamilyHistory] = useState<string[]>(initialFocusId ? [initialFocusId] : [])
 
   const setSelectedRootId = useCallback((rootId: string | null) => {
     setSelectedRootIdState(rootId)
@@ -98,6 +107,7 @@ export default function TreeApp({
 
   const selectBranch = useCallback((rootId: string) => {
     setMaxDepth(DEFAULT_MAX_DEPTH)
+    setFamilyHistory([]) // a branch opens at its founder
     setSelectedRootId(rootId)
   }, [setSelectedRootId])
 
@@ -115,6 +125,7 @@ export default function TreeApp({
     setMaxDepth(Math.max(DEFAULT_MAX_DEPTH, neededDepth))
     if (person.root_id !== effectiveRootIdRef.current) setSelectedRootId(person.root_id)
     setPendingFocusId(personId)
+    focusFamilyRef.current(personId)
   }, [peopleById, parentChildRows, setSelectedRootId])
 
   // A family created in this session has a temp id until Save writes it;
@@ -140,12 +151,45 @@ export default function TreeApp({
     return lr ?? null
   }, [selectedRoot, people, partnerships, parentChildRows, maxDepth])
 
+  const founderId = useMemo(
+    () => (effectiveRootId ? findRootPerson(effectiveRootId, people, parentChildRows)?.id ?? null : null),
+    [effectiveRootId, people, parentChildRows]
+  )
+
+  // ── View mode: phone-first family view, or the full tree ─────
+  // null until mounted, so the server render doesn't guess the screen size.
+  const [viewMode, setViewModeState] = useState<ViewMode | null>(null)
+  useEffect(() => {
+    let saved: string | null = null
+    try { saved = window.localStorage.getItem(VIEW_STORAGE_KEY) } catch { /* private mode */ }
+    setViewModeState(saved === 'family' || saved === 'tree'
+      ? saved
+      : window.matchMedia(PHONE_QUERY).matches ? 'family' : 'tree')
+  }, [])
+  const setViewMode = useCallback((mode: ViewMode) => {
+    setViewModeState(mode)
+    try { window.localStorage.setItem(VIEW_STORAGE_KEY, mode) } catch { /* private mode */ }
+  }, [])
+
+  // ── Family view focus + back history ─────────────────────────
+  const familyTop = familyHistory.length > 0 ? resolveId(familyHistory[familyHistory.length - 1]) : null
+  // Fall back to the founder if the focused person was deleted.
+  const familyFocusId = familyTop && peopleById.has(familyTop) ? familyTop : founderId
+  const focusFamily = useCallback((personId: string) => {
+    setFamilyHistory(h => (h[h.length - 1] === personId ? h : [...h, personId]))
+  }, [])
+  const focusFamilyRef = useRef(focusFamily)
+  focusFamilyRef.current = focusFamily
+  const familyBack = useCallback(() => setFamilyHistory(h => h.slice(0, -1)), [])
+
   // ── Scroll-to-and-highlight once the focus target is in the DOM ──
   const [highlightedPersonId, setHighlightedPersonId] = useState<string | null>(null)
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    if (!pendingFocusId) return
+    if (!pendingFocusId || !viewMode) return
+    // The family view moved its focus already (navigateToPerson).
+    if (viewMode === 'family') { setPendingFocusId(null); return }
     const el = document.getElementById(`person-${pendingFocusId}`)
     if (!el) return // not mounted yet — effect re-runs when layoutedRoot updates
     el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
@@ -157,7 +201,7 @@ export default function TreeApp({
     }, 400)
     setPendingFocusId(null)
     return () => clearTimeout(t)
-  }, [pendingFocusId, layoutedRoot])
+  }, [pendingFocusId, layoutedRoot, viewMode])
 
   // ── UI state ──────────────────────────────────────────────────
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null)
@@ -358,97 +402,142 @@ export default function TreeApp({
     [people, rootNamesById]
   )
 
+  const treeSize = layoutedRoot ? {
+    width: Math.max(...layoutedRoot.allNodes.map(n => n.x + 160)) + 100,
+    height: Math.max(...layoutedRoot.allNodes.map(n => n.y + 80)) + 180,
+  } : null
+
   return (
     <>
-      {!isEditable && (
-        <SearchBar people={searchablePeople} onSelectPerson={navigateToPerson} />
-      )}
-
-      {isEditable && (
-        <>
-          <EditToolbar
-            hasPendingChanges={draft.hasPendingChanges}
-            isSaving={draft.isSaving}
-            saveError={draft.saveError}
-            onSave={draft.saveChanges}
-            adminName={adminName}
-          />
-          <PeopleListPanel
-            people={searchablePeople}
-            parentChildRows={parentChildRows}
-            onNavigate={navigateToPerson}
-            onDelete={handleDeletePerson}
-            isOwner={isOwner}
-          />
-        </>
-      )}
-
-      {!selectedRoot ? (
-        <BranchPicker
-          roots={roots}
-          people={people}
-          parentChildRows={parentChildRows}
-          isEditable={isEditable}
-          onSelect={selectBranch}
-          onAddRoot={() => setModal({ type: 'addRoot' })}
-        />
-      ) : (
-        <div className="fixed inset-0 flex flex-col">
-          {/* ── Branch header ── */}
-          <div className="flex-shrink-0 flex items-center gap-3 px-5 py-4 bg-white border-b-2 border-slate-200 z-10">
-            <button
-              onClick={backToBranches}
-              className="
-                flex items-center gap-2 px-4 py-2.5 rounded-xl
-                text-walnut hover:bg-parchment
-                font-sans text-base font-semibold
-                transition-colors duration-150
-              "
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M9.5 3L4 8l5.5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              فروع العائلة
-            </button>
-            <span className="font-sans text-xl font-bold text-charcoal">
-              {selectedRoot.name}
-            </span>
-          </div>
-
-          {/* ── Scrollable tree ── */}
-          <div className="branch-scroll flex-1">
-            {layoutedRoot ? (
-              <div
-                className="relative"
-                style={{
-                  width: Math.max(...layoutedRoot.allNodes.map(n => n.x + 160)) + 100,
-                  height: Math.max(...layoutedRoot.allNodes.map(n => n.y + 80)) + 180,
-                }}
+      <div className="fixed inset-0 flex flex-col">
+        {/* ── Top bar: fits a 360px phone (search gets its own row there) ── */}
+        <header className="flex-shrink-0 bg-white border-b-2 border-slate-200 z-20 px-3 sm:px-5 py-2.5 flex flex-col gap-2.5">
+          <div className="flex items-center gap-2 min-w-0">
+            {selectedRoot ? (
+              <button
+                onClick={backToBranches}
+                aria-label="فروع العائلة"
+                className="
+                  flex-shrink-0 flex items-center gap-2 h-12 px-3 rounded-xl
+                  text-walnut hover:bg-parchment
+                  font-sans text-base font-semibold
+                  transition-colors duration-150
+                "
               >
-                <FamilyRoot
-                  layoutedRoot={layoutedRoot}
-                  isEditable={isEditable}
-                  highlightedPersonId={highlightedPersonId}
-                  activeNodeId={activeNodeId}
-                  peopleById={peopleById}
-                  rootNamesById={rootNamesById}
-                  onClickPerson={handleClickPerson}
-                  onActivateNode={handleActivateNode}
-                  onAddPartner={handleAddPartner}
-                  onAddChild={handleAddChild}
-                  onNavigateToOriginal={navigateToPerson}
-                  onRemovePartner={handleRemovePartner}
-                  onExpand={handleExpand}
+                <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden>
+                  <path d="M6.5 3L12 8l-5.5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="hidden sm:inline">فروع العائلة</span>
+              </button>
+            ) : null}
+            {/* In edit mode the controls fill this row on a phone, so the
+                branch name moves down next to the view toggle. */}
+            <h1 className={`flex-1 min-w-0 truncate font-sans text-xl font-bold text-charcoal ${isEditable ? 'invisible md:visible' : ''}`}>
+              {selectedRoot ? selectedRoot.name : 'شجرة العائلة'}
+            </h1>
+            {!isEditable && (
+              <SearchBar people={searchablePeople} onSelectPerson={navigateToPerson} className="hidden md:block w-80" />
+            )}
+            {isEditable && (
+              <>
+                <PeopleListPanel
+                  people={searchablePeople}
+                  parentChildRows={parentChildRows}
+                  onNavigate={navigateToPerson}
+                  onDelete={handleDeletePerson}
+                  isOwner={isOwner}
                 />
-              </div>
-            ) : (
-              <p className="font-sans text-lg text-walnut-light text-center py-16">
-                هذا الفرع فارغ.
-              </p>
+                <EditToolbar
+                  hasPendingChanges={draft.hasPendingChanges}
+                  isSaving={draft.isSaving}
+                  onSave={draft.saveChanges}
+                  adminName={adminName}
+                />
+              </>
             )}
           </div>
-        </div>
-      )}
+
+          {(selectedRoot || !isEditable) && (
+            <div className={`flex items-center gap-2 min-w-0 ${selectedRoot ? '' : 'md:hidden'}`}>
+              {selectedRoot && viewMode && <ViewToggle value={viewMode} onChange={setViewMode} />}
+              {isEditable && selectedRoot && (
+                <span className="md:hidden flex-1 min-w-0 truncate font-sans text-lg font-bold text-charcoal">
+                  {selectedRoot.name}
+                </span>
+              )}
+              {!isEditable && (
+                <SearchBar people={searchablePeople} onSelectPerson={navigateToPerson} className="flex-1 md:hidden" />
+              )}
+            </div>
+          )}
+
+          {draft.saveError && !draft.isSaving && <SaveErrorBanner saveError={draft.saveError} />}
+        </header>
+
+        {!selectedRoot ? (
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+            <BranchPicker
+              roots={roots}
+              people={people}
+              parentChildRows={parentChildRows}
+              isEditable={isEditable}
+              onSelect={selectBranch}
+              onAddRoot={() => setModal({ type: 'addRoot' })}
+            />
+          </div>
+        ) : !viewMode ? (
+          <div className="flex-1" />
+        ) : viewMode === 'family' ? (
+          <div className="flex-1 min-h-0 bg-parchment">
+            {familyFocusId ? (
+              <FamilyView
+                focusId={familyFocusId}
+                founderId={founderId}
+                canGoBack={familyHistory.length > 0}
+                isEditable={isEditable}
+                peopleById={peopleById}
+                partnerships={partnerships}
+                parentChildRows={parentChildRows}
+                lineage={lineage}
+                onFocus={focusFamily}
+                onBack={familyBack}
+                onOpenProfile={handleClickPerson}
+                onAddChild={handleAddChild}
+                onAddPartner={handleAddPartner}
+              />
+            ) : (
+              <p className="font-sans text-lg text-walnut-light text-center py-16">هذا الفرع فارغ.</p>
+            )}
+          </div>
+        ) : layoutedRoot && treeSize ? (
+          <ZoomableTree
+            width={treeSize.width}
+            height={treeSize.height}
+            centerOnId={layoutedRoot.rootNode.person.id}
+            centerKey={layoutedRoot.root.id}
+          >
+            <FamilyRoot
+              layoutedRoot={layoutedRoot}
+              isEditable={isEditable}
+              highlightedPersonId={highlightedPersonId}
+              activeNodeId={activeNodeId}
+              peopleById={peopleById}
+              rootNamesById={rootNamesById}
+              onClickPerson={handleClickPerson}
+              onActivateNode={handleActivateNode}
+              onAddPartner={handleAddPartner}
+              onAddChild={handleAddChild}
+              onNavigateToOriginal={navigateToPerson}
+              onRemovePartner={handleRemovePartner}
+              onExpand={handleExpand}
+            />
+          </ZoomableTree>
+        ) : (
+          <p className="font-sans text-lg text-walnut-light text-center py-16">
+            هذا الفرع فارغ.
+          </p>
+        )}
+      </div>
 
       {/* ── Profile popup ── */}
       <ProfilePopup
@@ -522,5 +611,29 @@ export default function TreeApp({
         onCancel={handleCloseModal}
       />
     </>
+  )
+}
+
+function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (mode: ViewMode) => void }) {
+  const options: { mode: ViewMode; label: string }[] = [
+    { mode: 'family', label: 'العائلة' },
+    { mode: 'tree', label: 'الشجرة' },
+  ]
+  return (
+    <div role="group" aria-label="طريقة العرض" className="flex-shrink-0 flex p-1 gap-1 bg-parchment border-2 border-slate-200 rounded-xl">
+      {options.map(o => (
+        <button
+          key={o.mode}
+          onClick={() => onChange(o.mode)}
+          aria-pressed={value === o.mode}
+          className={`
+            h-10 px-3 rounded-lg font-sans text-base font-bold whitespace-nowrap transition-colors duration-150
+            ${value === o.mode ? 'bg-walnut text-white shadow-sm' : 'text-walnut-light hover:text-walnut'}
+          `}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
   )
 }
