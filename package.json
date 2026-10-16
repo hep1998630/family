@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
-    "types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > lib/supabase/types.ts"
+    "types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > lib/supabase/types.ts",
+    "e2e:tree-scroll": "node e2e/tree-scroll.mjs"
   },
   "dependencies": {
     "@netlify/plugin-nextjs": "^5.15.9",
@@ -26,6 +27,7 @@
     "autoprefixer": "^10.0.0",
     "eslint": "^9.0.0",
     "eslint-config-next": "^15.0.0",
+    "playwright": "1.56.1",
     "postcss": "^8.0.0",
     "supabase": "^2.0.0",
     "tailwindcss": "^4.2.2",
