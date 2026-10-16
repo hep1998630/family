@@ -8,6 +8,12 @@ import type { Database } from '@/lib/supabase/types'
 // never forwarded from whatever the client itself sent.
 const AUTH_HEADERS = ['x-user-id', 'x-user-email', 'x-admin-role', 'x-admin-name', 'x-admin-error']
 
+// HTTP header values must be Latin-1, so free text (an Arabic admin name,
+// an error message) is percent-encoded here and decoded by the page with
+// readAuthHeader() from lib/auth/headers.ts. Setting a raw Arabic string
+// throws and turns the whole /edit request into a server error.
+const encode = (value: string) => encodeURIComponent(value)
+
 // Refreshes the Supabase session cookie on /edit and /login, and resolves
 // the signed-in user's admin role exactly once, here — handing the result
 // to the page via the request headers above instead of letting the page
@@ -62,7 +68,7 @@ export async function middleware(request: NextRequest) {
 
   if (user) {
     request.headers.set('x-user-id', user.id)
-    if (user.email) request.headers.set('x-user-email', user.email)
+    if (user.email) request.headers.set('x-user-email', encode(user.email))
 
     const { data: admin, error } = await supabase
       .from('admins')
@@ -80,10 +86,10 @@ export async function middleware(request: NextRequest) {
       // through so the page can show a distinct error instead of the
       // generic "not an admin" screen.
       console.error('[middleware] admins lookup failed:', error.message)
-      request.headers.set('x-admin-error', error.message)
+      request.headers.set('x-admin-error', encode(error.message))
     } else if (admin) {
       request.headers.set('x-admin-role', admin.role)
-      if (admin.name) request.headers.set('x-admin-name', admin.name)
+      if (admin.name) request.headers.set('x-admin-name', encode(admin.name))
     }
   }
 
