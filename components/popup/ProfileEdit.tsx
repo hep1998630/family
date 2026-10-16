@@ -6,12 +6,13 @@ import Button from '@/components/ui/Button'
 import { Input, Textarea } from '@/components/ui/Input'
 import type { PersonRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
+import { partnersOf, type Lineage } from '@/lib/tree/lineage'
 
 interface ProfileEditProps {
   person: PersonRow
   allPeople: PersonRow[]
-  partnerships: { person_a_id: string; person_b_id: string }[]
-  parentChildRows: { parent_id: string; child_id: string }[]
+  partnerships: { id: string; person_a_id: string; person_b_id: string; created_at: string }[]
+  lineage: Lineage
   onSave: (personId: string, values: PersonFormValues, photoFile: File | null) => Promise<void>
   onCancel: () => void
   onDelete: (personId: string) => void
@@ -23,22 +24,23 @@ export default function ProfileEdit({
   person,
   allPeople,
   partnerships,
-  parentChildRows,
   onSave,
   onCancel,
   onDelete,
   hasConnections,
   isOwner,
+  lineage,
 }: ProfileEditProps) {
-  const [values, setValues] = useState<PersonFormValues>({
+  const [values, setValues] = useState<PersonFormValues>(() => ({
     name: person.name,
     nickname: person.nickname ?? '',
     birth_date: person.birth_date ?? '',
     bio: person.bio ?? '',
     photo_url: person.photo_url ?? '',
-    mother_id: person.mother_id ?? null,
+    mother_id: lineage.motherOf(person.id)?.id ?? null,
+    father_id: lineage.fatherOf(person.id)?.id ?? null,
     gender: (person.gender ?? '') as 'male' | 'female' | '',
-  })
+  }))
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(person.photo_url ?? null)
   const [saving, setSaving] = useState(false)
@@ -70,24 +72,37 @@ export default function ProfileEdit({
     setSaving(false)
   }
 
-  const motherOptions = (() => {
-    const parentIds = parentChildRows
-      .filter(pc => pc.child_id === person.id)
-      .map(pc => pc.parent_id)
+  const peopleById = new Map(allPeople.map(p => [p.id, p]))
+  const byLabel = (a: PersonRow, b: PersonRow) => lineage.label(a).localeCompare(lineage.label(b), 'ar')
+  // Always keep the current choice selectable, even if it no longer fits the
+  // filter (e.g. a parent whose gender was never set).
+  const withCurrent = (list: PersonRow[], id: string | null) => {
+    const current = id ? peopleById.get(id) : undefined
+    return current && !list.some(p => p.id === current.id) ? [current, ...list] : list
+  }
 
-    const peopleById = new Map(allPeople.map(p => [p.id, p]))
+  const fatherOptions = withCurrent(
+    allPeople.filter(p => p.gender === 'male' && p.id !== person.id && !p.is_shortcut).sort(byLabel),
+    values.father_id,
+  )
+  // The mother is one of the chosen father's wives; with no father chosen,
+  // any woman can be picked (e.g. a child whose father isn't recorded).
+  const motherOptions = withCurrent(
+    (values.father_id
+      ? partnersOf(values.father_id, partnerships, peopleById).filter(p => p.gender !== 'male')
+      : allPeople.filter(p => p.gender === 'female' && !p.is_shortcut)
+    ).filter(p => p.id !== person.id).sort(byLabel),
+    values.mother_id,
+  )
 
-    const fatherId = parentIds.find(id => peopleById.get(id)?.gender === 'male')
-    if (!fatherId) return []
-
-    const partnerIds = partnerships
-      .filter(p => p.person_a_id === fatherId || p.person_b_id === fatherId)
-      .map(p => p.person_a_id === fatherId ? p.person_b_id : p.person_a_id)
-
-    return partnerIds
-      .map(id => peopleById.get(id))
-      .filter((p): p is PersonRow => !!p && p.id !== person.id && !p.is_shortcut)
-  })()
+  const setFather = (fatherId: string | null) => {
+    setValues(prev => {
+      // Picking a different father clears a mother who isn't his wife.
+      const wives = fatherId ? partnersOf(fatherId, partnerships, peopleById).map(p => p.id) : null
+      const keepMother = !wives || (prev.mother_id !== null && wives.includes(prev.mother_id))
+      return { ...prev, father_id: fatherId, mother_id: keepMother ? prev.mother_id : null }
+    })
+  }
 
   return (
     <div className="flex flex-col">
@@ -188,30 +203,21 @@ export default function ProfileEdit({
           </div>
         </div>
 
-        {/* Mother select */}
-        <div className="flex flex-col gap-1.5">
-          <label className="font-sans text-base font-semibold text-charcoal">
-            الأم
-          </label>
-          <select
-            value={values.mother_id ?? ''}
-            onChange={e => set('mother_id', e.target.value || null)}
-            className="
-              w-full px-4 py-3.5 rounded-xl
-              font-sans text-lg text-charcoal
-              bg-white border-2 border-slate-300
-              focus:outline-none focus:border-walnut focus:ring-2 focus:ring-walnut/20
-              transition-colors duration-150
-            "
-          >
-            <option value="">— غير محدد —</option>
-            {motherOptions.map(p => (
-              <option key={p.id} value={p.id}>
-                {p.name}{p.nickname ? ` (${p.nickname})` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* Parents — editing these rewrites the child's parent links */}
+        <ParentSelect
+          label="الأب"
+          value={values.father_id}
+          options={fatherOptions}
+          labelFor={lineage.label}
+          onChange={setFather}
+        />
+        <ParentSelect
+          label="الأم"
+          value={values.mother_id}
+          options={motherOptions}
+          labelFor={lineage.label}
+          onChange={id => set('mother_id', id)}
+        />
 
         <Textarea
           label="السيرة / الوصف"
@@ -273,6 +279,44 @@ export default function ProfileEdit({
         </div>
 
       </div>
+    </div>
+  )
+}
+
+function ParentSelect({
+  label,
+  value,
+  options,
+  labelFor,
+  onChange,
+}: {
+  label: string
+  value: string | null
+  options: PersonRow[]
+  labelFor: (p: PersonRow) => string
+  onChange: (id: string | null) => void
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="font-sans text-base font-semibold text-charcoal">{label}</label>
+      <select
+        value={value ?? ''}
+        onChange={e => onChange(e.target.value || null)}
+        className="
+          w-full px-4 py-3.5 rounded-xl
+          font-sans text-lg text-charcoal
+          bg-white border-2 border-slate-300
+          focus:outline-none focus:border-walnut focus:ring-2 focus:ring-walnut/20
+          transition-colors duration-150
+        "
+      >
+        <option value="">— غير محدد —</option>
+        {options.map(p => (
+          <option key={p.id} value={p.id}>
+            {labelFor(p)}{p.nickname ? ` (${p.nickname})` : ''}
+          </option>
+        ))}
+      </select>
     </div>
   )
 }

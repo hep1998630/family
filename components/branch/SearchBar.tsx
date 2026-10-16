@@ -14,9 +14,10 @@ interface SearchablePerson {
 interface SearchBarProps {
   people: SearchablePerson[]
   onSelectPerson: (id: string) => void
+  className?: string
 }
 
-export default function SearchBar({ people, onSelectPerson }: SearchBarProps) {
+export default function SearchBar({ people, onSelectPerson, className = '' }: SearchBarProps) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchablePerson[]>([])
   const [isOpen, setIsOpen] = useState(false)
@@ -110,15 +111,15 @@ export default function SearchBar({ people, onSelectPerson }: SearchBarProps) {
   return (
     <div
       ref={containerRef}
-      className="absolute top-5 left-1/2 -translate-x-1/2 z-20 w-96"
+      className={`relative z-20 min-w-0 ${className}`}
     >
       {/* ── Input ── */}
       <div
         className={`
           flex items-center gap-3
-          bg-white
-          border-2 rounded-2xl px-4 py-3
-          shadow-card
+          bg-white h-12
+          border-2 rounded-xl px-3
+          sm:px-4
           transition-all duration-150
           ${focused
             ? 'border-walnut shadow-[0_0_0_3px_rgba(30,64,175,0.15)]'
@@ -143,9 +144,9 @@ export default function SearchBar({ people, onSelectPerson }: SearchBarProps) {
           onKeyDown={handleKeyDown}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholder="ابحث عن أشخاص…"
+          placeholder="ابحث…"
           className="
-            flex-1 bg-transparent outline-none
+            flex-1 min-w-0 bg-transparent outline-none
             font-sans text-lg text-charcoal
             placeholder:text-slate-400
           "

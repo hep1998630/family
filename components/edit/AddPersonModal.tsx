@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import Avatar from '@/components/ui/Avatar'
-import { Input, Textarea } from '@/components/ui/Input'
+import { Input, Textarea, FieldWrapper } from '@/components/ui/Input'
 import type { PersonRow, RootRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
 
@@ -13,11 +13,17 @@ type AddPersonMode = 'partner' | 'child'
 interface AddPersonModalProps {
   isOpen: boolean
   mode: AddPersonMode
+  /** The person being added to, as «name fatherName». */
   relativeName: string
   currentPerson?: PersonRow | null
   allPeople?: PersonRow[]
-  existingPartnerIds?: string[]
+  /** Never offered as an existing partner: current partners and close family. */
+  excludedIds?: string[]
   roots?: RootRow[]
+  /** «name fatherName» for any person, so same first names can be told apart. */
+  labelFor?: (p: PersonRow) => string
+  /** Child mode: the other parent to choose, from the current person's partners. */
+  otherParent?: { role: 'mother' | 'father'; options: PersonRow[] }
   onLinkExisting?: (personId: string) => Promise<void>
   onConfirm: (values: PersonFormValues) => Promise<void>
   onCancel: () => void
@@ -30,6 +36,7 @@ const EMPTY_FORM: PersonFormValues = {
   bio:        '',
   photo_url:  '',
   mother_id:  null,
+  father_id:  null,
   gender:     '',
 }
 
@@ -39,13 +46,18 @@ export default function AddPersonModal({
   relativeName,
   currentPerson,
   allPeople = [],
-  existingPartnerIds = [],
+  excludedIds = [],
   roots = [],
+  labelFor = p => p.name,
+  otherParent,
   onLinkExisting,
   onConfirm,
   onCancel,
 }: AddPersonModalProps) {
   const [saving, setSaving] = useState(false)
+  // A double tap can fire the confirm handler twice before `saving`
+  // re-renders the button as disabled — this ref blocks the second call.
+  const submittingRef = useRef(false)
 
   const [partnerTab, setPartnerTab] = useState<'existing' | 'new'>('existing')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -53,35 +65,67 @@ export default function AddPersonModal({
 
   const [values, setValues] = useState<PersonFormValues>(EMPTY_FORM)
   const [nameError, setNameError] = useState('')
+  const [parentError, setParentError] = useState('')
 
   const set = (key: keyof PersonFormValues, value: string | null) =>
     setValues(prev => ({ ...prev, [key]: value }))
+
+  // Partners are always the opposite gender of the person they're added to.
+  const partnerGender: 'male' | 'female' | null =
+    currentPerson?.gender === 'male' ? 'female'
+      : currentPerson?.gender === 'female' ? 'male'
+        : null
+
+  const parentKey = otherParent?.role === 'father' ? 'father_id' : 'mother_id'
+  const onlyParentId = otherParent?.options.length === 1 ? otherParent.options[0].id : null
 
   useEffect(() => {
     if (!isOpen) {
       setValues(EMPTY_FORM)
       setNameError('')
+      setParentError('')
       setPartnerTab('existing')
       setSelectedId(null)
       setSearch('')
+    } else if (onlyParentId) {
+      // Preselect when there's exactly one possible other parent.
+      setValues(prev => ({ ...prev, [parentKey]: prev[parentKey] ?? onlyParentId }))
     }
-  }, [isOpen])
+  }, [isOpen, onlyParentId, parentKey])
 
   const handleCancel = () => { onCancel() }
 
   const handleConfirmNew = async () => {
-    if (!values.name.trim()) { setNameError('الاسم مطلوب'); return }
-    setNameError('')
+    if (submittingRef.current) return
+    let ok = true
+    if (!values.name.trim()) { setNameError('الاسم مطلوب'); ok = false } else setNameError('')
+    if (mode === 'child' && otherParent && !values[parentKey]) {
+      setParentError(otherParent.role === 'father' ? 'اختر الأب' : 'اختر الأم')
+      ok = false
+    } else setParentError('')
+    if (!ok) return
+
+    submittingRef.current = true
     setSaving(true)
-    await onConfirm(values)
-    setSaving(false)
+    try {
+      await onConfirm(mode === 'partner' && partnerGender ? { ...values, gender: partnerGender } : values)
+    } finally {
+      submittingRef.current = false
+      setSaving(false)
+    }
   }
 
   const handleConfirmExisting = async () => {
+    if (submittingRef.current) return
     if (!selectedId || !onLinkExisting) return
+    submittingRef.current = true
     setSaving(true)
-    await onLinkExisting(selectedId)
-    setSaving(false)
+    try {
+      await onLinkExisting(selectedId)
+    } finally {
+      submittingRef.current = false
+      setSaving(false)
+    }
   }
 
   const rootsMap = useMemo(
@@ -89,29 +133,31 @@ export default function AddPersonModal({
     [roots]
   )
 
-  const eligible = useMemo(() => {
+  const candidates = useMemo(() => {
     if (!currentPerson) return []
-    return allPeople.filter(p => {
-      if (p.id === currentPerson.id) return false
-      if (existingPartnerIds.includes(p.id)) return false
-      if (p.is_shortcut) return false
-      if (currentPerson.gender === 'male'   && p.gender === 'male')   return false
-      if (currentPerson.gender === 'female' && p.gender === 'female') return false
-      return true
-    })
-  }, [allPeople, currentPerson, existingPartnerIds])
+    return allPeople.filter(p =>
+      p.id !== currentPerson.id && !excludedIds.includes(p.id) && !p.is_shortcut)
+  }, [allPeople, currentPerson, excludedIds])
+
+  // Only the opposite gender can be linked as a partner.
+  const eligible = useMemo(
+    () => candidates.filter(p => partnerGender !== null && p.gender === partnerGender),
+    [candidates, partnerGender]
+  )
+  const hiddenWithoutGender = candidates.filter(p => !p.gender).length
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return eligible
     return eligible.filter(p =>
-      p.name.toLowerCase().includes(q) ||
+      labelFor(p).toLowerCase().includes(q) ||
       (p.nickname?.toLowerCase().includes(q) ?? false)
     )
-  }, [eligible, search])
+  }, [eligible, search, labelFor])
 
   // ── Child mode ──────────────────────────────────────────────
   if (mode === 'child') {
+    const roleLabel = otherParent?.role === 'father' ? 'الأب' : 'الأم'
     return (
       <Modal isOpen={isOpen} onClose={handleCancel} maxWidth="max-w-sm">
         <div className="px-6 pt-7 pb-6 flex flex-col gap-5">
@@ -123,6 +169,25 @@ export default function AddPersonModal({
           </div>
           <div className="h-0.5 bg-slate-200" />
           <div className="flex flex-col gap-4">
+            {otherParent && (
+              <FieldWrapper label={roleLabel} required error={parentError}>
+                <select
+                  value={values[parentKey] ?? ''}
+                  onChange={e => set(parentKey, e.target.value || null)}
+                  className="
+                    w-full px-4 py-3.5 rounded-xl
+                    font-sans text-lg text-charcoal
+                    bg-white border-2 border-slate-300
+                    focus:outline-none focus:border-walnut focus:ring-2 focus:ring-walnut/20
+                  "
+                >
+                  {otherParent.options.length > 1 && <option value="">— اختر {roleLabel} —</option>}
+                  {otherParent.options.map(p => (
+                    <option key={p.id} value={p.id}>{labelFor(p)}</option>
+                  ))}
+                </select>
+              </FieldWrapper>
+            )}
             <Input
               label="الاسم" required
               value={values.name}
@@ -168,7 +233,9 @@ export default function AddPersonModal({
 
         {/* Header */}
         <div>
-          <h3 className="font-sans text-2xl font-bold text-charcoal">إضافة شريك</h3>
+          <h3 className="font-sans text-2xl font-bold text-charcoal">
+            {partnerGender === 'female' ? 'إضافة زوجة' : partnerGender === 'male' ? 'إضافة زوج' : 'إضافة شريك'}
+          </h3>
           <p className="font-sans text-base text-walnut-light mt-1">
             إضافة شريك لـ {relativeName}
           </p>
@@ -242,7 +309,7 @@ export default function AddPersonModal({
                       <Avatar name={p.name} photoUrl={p.photo_url} size={38} />
                       <div className="flex-1 min-w-0">
                         <p className={`font-sans text-base font-semibold truncate ${isSelected ? 'text-white' : 'text-charcoal'}`}>
-                          {p.name}
+                          {labelFor(p)}
                           {p.nickname && (
                             <span className={`font-normal mr-1.5 ${isSelected ? 'text-white/70' : 'text-walnut-light'}`}>
                               ({p.nickname})
@@ -255,15 +322,16 @@ export default function AddPersonModal({
                           </p>
                         )}
                       </div>
-                      {p.gender && (
-                        <span className={`font-sans text-sm flex-shrink-0 font-semibold ${isSelected ? 'text-white/80' : 'text-walnut-light'}`}>
-                          {p.gender === 'male' ? 'ذكر' : 'أنثى'}
-                        </span>
-                      )}
                     </button>
                   )
                 })}
               </div>
+            )}
+
+            {hiddenWithoutGender > 0 && (
+              <p className="font-sans text-sm text-walnut-light leading-relaxed">
+                لا يظهر هنا من لم يُحدَّد جنسه ({hiddenWithoutGender}). يمكنك تحديد الجنس من صفحة الشخص.
+              </p>
             )}
 
             <div className="flex items-center justify-end gap-3 pt-1">
@@ -304,7 +372,11 @@ export default function AddPersonModal({
                 onChange={e => set('birth_date', e.target.value)}
                 placeholder="مثلاً: 1990، حوالي 1945"
               />
-              <GenderToggle value={values.gender} onChange={g => set('gender', g)} />
+              {partnerGender && (
+                <p className="font-sans text-base text-charcoal">
+                  <span className="font-semibold">الجنس:</span> {partnerGender === 'male' ? 'ذكر' : 'أنثى'}
+                </p>
+              )}
               <Textarea
                 label="السيرة"
                 value={values.bio}
