@@ -10,7 +10,8 @@
     "test": "vitest run",
     "types": "supabase gen types typescript --project-id YOUR_PROJECT_ID > lib/supabase/types.ts",
     "e2e:tree-scroll": "node e2e/tree-scroll.mjs",
-    "e2e:saved-views": "node e2e/saved-views.mjs"
+    "e2e:saved-views": "node e2e/saved-views.mjs",
+    "e2e:view-builder": "node e2e/view-builder.mjs"
   },
   "dependencies": {
     "@netlify/plugin-nextjs": "^5.15.9",

@@ -116,6 +116,17 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [] 
 
     const fi = req.method === 'GET' ? -1 : failures.findIndex(f => f.table === table && f.method === req.method)
     const failure = fi === -1 ? null : failures.splice(fi, 1)[0]
+
+    // Like 005_saved_views.sql's trigger: the partner must be a partner of the top person.
+    if (table === 'saved_views' && (req.method === 'POST' || req.method === 'PATCH')) {
+      const input = JSON.parse(raw.toString() || '{}')
+      const rows = req.method === 'POST' ? [].concat(input) : db.saved_views.filter(match).map(r => ({ ...r, ...input }))
+      const bad = rows.find(r => r.partner_id && !db.partnerships.some(p =>
+        (p.person_a_id === r.top_person_id && p.person_b_id === r.partner_id) ||
+        (p.person_b_id === r.top_person_id && p.person_a_id === r.partner_id)))
+      if (bad) return send(res, 400, { message: `saved view partner ${bad.partner_id} is not a partner of ${bad.top_person_id}`, code: '23514' })
+    }
+
     if (failure?.mode === 'before') return send(res, 500, { message: `injected ${req.method} failure on ${table}`, code: 'XX000' })
 
     let status = 200, body
@@ -148,7 +159,7 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [] 
       rows.forEach(r => Object.assign(r, patch))
       log.push({ table, method: 'PATCH', patch, count: rows.length })
       status = prefer.includes('return=representation') ? 200 : 204
-      body = status === 200 ? rows : undefined
+      body = status === 200 ? (accept.includes('vnd.pgrst.object') ? rows[0] : rows) : undefined
     } else if (req.method === 'DELETE') {
       const before = db[table].length
       db[table] = db[table].filter(r => !match(r))

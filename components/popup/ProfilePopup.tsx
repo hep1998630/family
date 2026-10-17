@@ -24,6 +24,8 @@ interface ProfilePopupProps {
   // Mutations (from usePeople hook)
   onUpdatePerson: (id: string, values: PersonFormValues, photoFile: File | null) => Promise<void>
   onDeletePerson: (id: string) => void
+  /** Edit mode: open the saved-view builder starting at this person. */
+  onCreateView?: (personId: string) => void
 }
 
 export default function ProfilePopup({
@@ -38,6 +40,7 @@ export default function ProfilePopup({
   lineage,
   onUpdatePerson,
   onDeletePerson,
+  onCreateView,
 }: ProfilePopupProps) {
   const person = useMemo(
     () => people.find(p => p.id === personId) ?? null,
@@ -150,6 +153,22 @@ export default function ProfilePopup({
           childrenNames={childrenNames}
           motherName={motherName}
         />
+      )}
+
+      {isEditable && onCreateView && !person.is_shortcut && (
+        <div className="px-6 sm:px-8 pb-6 pt-4 border-t-2 border-slate-100">
+          <button
+            onClick={() => { onClose(); onCreateView(person.id) }}
+            className="
+              w-full min-h-[52px] px-4 rounded-xl
+              border-2 border-dashed border-walnut/40 text-walnut
+              font-sans text-base font-bold
+              hover:border-walnut hover:bg-parchment transition-colors duration-150
+            "
+          >
+            إنشاء عرض لذرية هذا الشخص
+          </button>
+        </div>
       )}
 
     </Modal>

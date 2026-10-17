@@ -261,6 +261,11 @@ export function useEditDraft(
   /** Maps a temp id to its real id once it has been saved (identity otherwise). */
   const resolveId = useCallback((id: string) => idMapRef.current.get(id) ?? id, [])
 
+  /** True while a person or partnership added in the draft hasn't reached the database yet. */
+  const isUnsaved = useCallback((id: string) => opsRef.current.some(op =>
+    (op.type === 'addPerson' || op.type === 'addPartnership') && (op.tempId === id || op.realId === id)
+  ), [])
+
   // ── saveChanges — flush pending ops to Supabase ─────────────
   const saveChanges = useCallback(async (): Promise<boolean> => {
     // Guards against a double click firing two concurrent saves — React
@@ -301,6 +306,7 @@ export function useEditDraft(
     updatePerson, uploadPhoto, deletePerson, hasConnections,
     saveChanges,
     resolveId,
+    isUnsaved,
     isSaving,
     saveError,
     hasPendingChanges: opCount > 0,
