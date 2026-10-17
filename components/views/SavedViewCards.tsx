@@ -14,6 +14,7 @@ interface SavedViewCardsProps {
   personFor: (id: string) => ViewCardPerson | undefined
   /** In-app selection; without it each card is a link to the view's page. */
   onSelect?: (viewId: string) => void
+  /** Section heading; pass '' for none. */
   title?: string
 }
 
@@ -24,8 +25,8 @@ interface SavedViewCardsProps {
 export default function SavedViewCards({ views, personFor, onSelect, title = 'عروض مختارة' }: SavedViewCardsProps) {
   if (views.length === 0) return null
   return (
-    <section className="w-full flex flex-col gap-4" aria-label={title}>
-      <h2 className="font-sans text-2xl font-bold text-charcoal">{title}</h2>
+    <section className="w-full flex flex-col gap-4" aria-label={title || undefined}>
+      {title && <h2 className="font-sans text-2xl font-bold text-charcoal">{title}</h2>}
       <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-4">
         {views.map(view => {
           const top = personFor(view.top_person_id)

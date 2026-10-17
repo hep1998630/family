@@ -57,7 +57,8 @@ export default function ZoomableTree({ width, height, centerOnId, centerKey, chi
   // Center the founder when a branch opens (keeps the top of the tree in view).
   useLayoutEffect(() => {
     const s = scrollerRef.current
-    const el = centerOnId ? document.getElementById(`person-${centerOnId}`) : null
+    // Look inside this tree only: another tree (e.g. a preview) may show the same person.
+    const el = centerOnId ? s?.querySelector<HTMLElement>(`[id="person-${centerOnId}"]`) : null
     if (!s || !el) return
     const x = (parseFloat(el.style.left) || 0) + el.offsetWidth / 2
     if (zoom === 1) {

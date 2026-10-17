@@ -13,6 +13,8 @@ import FamilyView from '@/components/family/FamilyView'
 import ZoomableTree from '@/components/tree/ZoomableTree'
 import SavedViewCards from '@/components/views/SavedViewCards'
 import SavedViewPanel from '@/components/views/SavedViewPanel'
+import SavedViewManager from '@/components/views/SavedViewManager'
+import ViewBuilder from '@/components/views/ViewBuilder'
 import PeopleListPanel from '@/components/edit/PeopleListPanel'
 import { AskGenderModal, NeedPartnerModal } from '@/components/edit/StepModals'
 import { useRoots } from '@/hooks/useRoots'
@@ -20,9 +22,9 @@ import { usePeople } from '@/hooks/usePeople'
 import { usePartnerships } from '@/hooks/usePartnerships'
 import { useParentChild } from '@/hooks/useParentChild'
 import { useEditDraft } from '@/hooks/useEditDraft'
+import { useSavedViews, type SavedViewInput } from '@/hooks/useSavedViews'
 import { computeLayout, computeDepthFromRoot, computeViewLayout, findRootPerson } from '@/lib/tree/layout'
 import { buildLineage, closeFamilyIds, partnersOf } from '@/lib/tree/lineage'
-import { sortViews } from '@/lib/views'
 import type { PersonRow, PartnershipRow, ParentChildRow, RootRow, SavedViewRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
 
@@ -127,6 +129,7 @@ export default function TreeApp({
   }, [setSelectedRootId])
 
   const backToBranches = useCallback(() => {
+    setBuilder(null)
     setActiveViewId(null)
     if (viewModeRef.current === 'views') setViewModeState(defaultModeRef.current)
     setSelectedRootId(null)
@@ -142,6 +145,7 @@ export default function TreeApp({
     setMaxDepth(Math.max(DEFAULT_MAX_DEPTH, neededDepth))
     if (viewModeRef.current === 'views') {
       // Searching or following a link from a saved view opens the full tree / family view.
+      setBuilder(null)
       setActiveViewId(null)
       setViewModeState(defaultModeRef.current)
       setSelectedRootId(person.root_id)
@@ -198,19 +202,39 @@ export default function TreeApp({
   }, [])
 
   // ── Saved views («العروض») ───────────────────────────────────
-  const [savedViews] = useState(() => sortViews(initialSavedViews))
+  const savedViewsApi = useSavedViews(initialSavedViews)
+  const savedViews = savedViewsApi.views
   const [activeViewId, setActiveViewId] = useState<string | null>(initialViewId)
   const activeView = activeViewId ? savedViews.find(v => v.id === activeViewId) ?? null : null
+  // Admin view builder: editing `viewId`, or creating one (optionally starting at `topPersonId`).
+  const [builder, setBuilder] = useState<{ viewId?: string; topPersonId?: string } | null>(null)
 
-  const openView = useCallback((viewId: string) => {
-    const view = savedViews.find(v => v.id === viewId)
+  /** `view` can be passed when it was just saved and isn't in `savedViews` yet. */
+  const openView = useCallback((viewId: string, view = savedViews.find(v => v.id === viewId)) => {
     const top = view && peopleById.get(view.top_person_id)
     if (!view || !top) return
+    setBuilder(null)
     setActiveViewId(viewId)
     setViewModeState('views')
     setSelectedRootIdState(top.root_id)
     router.replace(`${pathname}?view=${encodeURIComponent(viewId)}`, { scroll: false })
   }, [savedViews, peopleById, router, pathname])
+
+  const openBuilder = useCallback((target: { viewId?: string; topPersonId?: string }) => {
+    const top = target.topPersonId && peopleById.get(target.topPersonId)
+    if (top) setSelectedRootIdState(top.root_id)
+    setBuilder(target)
+    setViewModeState('views')
+  }, [peopleById])
+
+  const saveBuilder = useCallback(async (input: SavedViewInput) => {
+    const result = builder?.viewId
+      ? await savedViewsApi.update(builder.viewId, input)
+      : await savedViewsApi.create(input)
+    if (result.error !== null) return result.error
+    openView(result.data.id, result.data)
+    return null
+  }, [builder, savedViewsApi, openView])
 
   /** Leaves an open view (back to the list, or to another tab). */
   const closeView = useCallback(() => {
@@ -221,6 +245,7 @@ export default function TreeApp({
   const setViewMode = useCallback((mode: ViewMode) => {
     setViewModeState(mode)
     if (mode !== 'views') {
+      setBuilder(null)
       defaultModeRef.current = mode
       try { window.localStorage.setItem(VIEW_STORAGE_KEY, mode) } catch { /* private mode */ }
       if (activeViewId) closeView()
@@ -527,7 +552,7 @@ export default function TreeApp({
           {(selectedRoot || !isEditable) && (
             <div className={`flex flex-wrap items-center gap-2 min-w-0 ${selectedRoot ? '' : 'md:hidden'}`}>
               {selectedRoot && viewMode && (
-                <ViewToggle value={viewMode} onChange={setViewMode} showViews={savedViews.length > 0} />
+                <ViewToggle value={viewMode} onChange={setViewMode} showViews={isEditable || savedViews.length > 0} />
               )}
               {isEditable && selectedRoot && (
                 <span className="md:hidden flex-1 min-w-0 truncate font-sans text-lg font-bold text-charcoal">
@@ -564,6 +589,22 @@ export default function TreeApp({
           </div>
         ) : !viewMode ? (
           <div className="flex-1" />
+        ) : viewMode === 'views' && isEditable && builder ? (
+          <ViewBuilder
+            key={builder.viewId ?? `new:${builder.topPersonId ?? ''}`}
+            view={builder.viewId ? savedViews.find(v => v.id === builder.viewId) : undefined}
+            initialTopPersonId={builder.topPersonId}
+            roots={roots}
+            people={people}
+            peopleById={peopleById}
+            partnerships={partnerships}
+            parentChildRows={parentChildRows}
+            rootNamesById={rootNamesById}
+            lineage={lineage}
+            isUnsaved={draft.isUnsaved}
+            onSave={saveBuilder}
+            onCancel={() => setBuilder(null)}
+          />
         ) : viewMode === 'views' ? (
           activeView ? (
             <SavedViewPanel
@@ -576,6 +617,7 @@ export default function TreeApp({
               highlightedPersonId={highlightedPersonId}
               activeNodeId={activeNodeId}
               onBackToList={closeView}
+              onEdit={isEditable ? () => openBuilder({ viewId: activeView.id }) : undefined}
               onClickPerson={handleClickPerson}
               onActivateNode={handleActivateNode}
               onAddPartner={handleAddPartner}
@@ -589,7 +631,17 @@ export default function TreeApp({
                 {activeViewId && (
                   <p role="alert" className="font-sans text-lg text-walnut-light text-center">لم يعد هذا العرض متاحاً.</p>
                 )}
-                {savedViews.length > 0 ? (
+                {isEditable ? (
+                  <SavedViewManager
+                    views={savedViews}
+                    personFor={id => peopleById.get(id)}
+                    onOpen={openView}
+                    onCreate={() => openBuilder({})}
+                    onEdit={viewId => openBuilder({ viewId })}
+                    onDelete={savedViewsApi.remove}
+                    onMove={savedViewsApi.move}
+                  />
+                ) : savedViews.length > 0 ? (
                   <SavedViewCards views={savedViews} personFor={id => peopleById.get(id)} onSelect={openView} />
                 ) : (
                   <p className="font-sans text-lg text-walnut-light text-center py-10">لا توجد عروض بعد.</p>
@@ -662,6 +714,7 @@ export default function TreeApp({
         lineage={lineage}
         onUpdatePerson={handleUpdatePerson}
         onDeletePerson={handleDeletePerson}
+        onCreateView={isEditable ? topPersonId => openBuilder({ topPersonId }) : undefined}
       />
 
       {/* ── Add Partner modal ── */}

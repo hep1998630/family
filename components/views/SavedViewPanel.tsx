@@ -18,6 +18,8 @@ interface SavedViewPanelProps {
   highlightedPersonId: string | null
   activeNodeId: string | null
   onBackToList: () => void
+  /** Edit mode: open this view in the builder. */
+  onEdit?: () => void
   onClickPerson: (personId: string) => void
   onActivateNode: (personId: string) => void
   onAddPartner: (personId: string) => void
@@ -37,6 +39,7 @@ export default function SavedViewPanel({
   highlightedPersonId,
   activeNodeId,
   onBackToList,
+  onEdit,
   onClickPerson,
   onActivateNode,
   onAddPartner,
@@ -76,6 +79,14 @@ export default function SavedViewPanel({
         </div>
         <div className="flex items-center gap-3 ps-14">
           <p className="flex-1 min-w-0 font-sans text-base text-walnut-light leading-snug break-words">{subtitle}</p>
+          {onEdit && (
+            <button
+              onClick={onEdit}
+              className="flex-shrink-0 h-12 px-4 rounded-xl bg-white border-2 border-walnut/30 text-walnut font-sans text-base font-bold hover:border-walnut"
+            >
+              تعديل
+            </button>
+          )}
           <ShareViewButton viewId={view.id} name={view.name} />
         </div>
       </div>
