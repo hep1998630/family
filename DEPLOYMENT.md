@@ -21,12 +21,19 @@ Supabase dashboard → **SQL Editor** → open each file in
 2. `002_add_gender.sql`
 3. `003_add_auth_roles.sql`
 4. `004_grant_data_api_access.sql`
+5. `005_saved_views.sql` — the admins' saved tree views («عروض مختارة»)
 
-All four must be run, in order — each depends on the schema the previous
+All five must be run, in order — each depends on the schema the previous
 one created. **004 is not optional**: since 2026-05-30, new Supabase
 projects no longer auto-grant table access to the API, so without it every
 request from the app fails with a permission error that looks exactly
 like "you're not an admin" even when you are (see Troubleshooting below).
+
+**Already running an older copy?** Run only the migrations you haven't
+run yet, in order, *before* publishing the app version that needs them.
+For `005_saved_views.sql` that means before deploying the saved-views
+feature: until it's run, the site still loads but shows no saved views
+(the server log says `could not load — has migration 005 been run?`).
 
 `003_add_auth_roles.sql` contains `drop policy if exists ...` statements
 near the top — that's expected and not destructive. It's replacing the

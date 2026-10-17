@@ -8,6 +8,11 @@
 //  - Multiple partners all laid out horizontally
 //  - All children listed below the person regardless of which partner is their mother
 //  - Children are centered under their parent group
+//
+// Two entry points share the same node/edge/position logic:
+//  - computeLayout: a whole branch, starting at its founder (the full tree)
+//  - computeViewLayout: a saved view, starting at any person, optionally
+//    limited to one of their marriages
 
 import type { PersonRow, PartnershipRow, ParentChildRow } from '@/lib/supabase/types'
 import type { TreeNode, Edge, PartnershipEdge, LayoutedRoot } from '@/types'
@@ -36,10 +41,7 @@ export function computeLayout(
   parentChildRows: ParentChildRow[],
   maxDepth: number = Infinity,
 ): LayoutedRoot[] {
-  // Build lookup maps
-  const peopleById = new Map<string, PersonRow>(people.map(p => [p.id, p]))
-  const partnerMap = buildPartnerMap(partnerships)
-  const childrenMap = buildChildrenMap(parentChildRows)
+  const base = buildContext(people, partnerships, parentChildRows)
 
   // People who appear as a child in parent_child have a natural tree position.
   // Used by buildTreeNode to decide reference vs full partner node.
@@ -54,36 +56,103 @@ export function computeLayout(
     if (!rootPerson) continue
 
     // Build tree recursively, starting with a temporary position
-    const visited = new Set<string>()
-    const rootNode = buildTreeNode(
-      rootPerson,
-      peopleById,
-      partnerMap,
-      childrenMap,
-      childIdsSet,
-      visited,
-      0,
-      maxDepth,
-    )
-
-    // Compute subtree widths bottom-up, then assign x/y positions top-down
+    const rootNode = buildTreeNode(rootPerson, { ...base, childIdsSet, visited: new Set<string>(), maxDepth }, 0)
     const subtreeWidth = computeSubtreeWidth(rootNode)
-    assignPositions(rootNode, canvasOffsetX, 100, partnerMap, childrenMap, peopleById)
-
-    // Flatten all nodes
-    const allNodes = flattenTree(rootNode)
-
-    // Build edges
-    const edges = buildEdges(allNodes)
-    const partnershipEdges = buildPartnershipEdges(allNodes)
-
-    results.push({ root, rootNode, allNodes, edges, partnershipEdges })
+    results.push(positionTree(root, rootNode, canvasOffsetX))
 
     // Next root starts after this one with a gap
     canvasOffsetX += subtreeWidth + ROOT_OFFSET_X
   }
 
   return results
+}
+
+export interface ViewLayoutOptions {
+  /** Generations below the top person (1 = children only); null/undefined = all. */
+  maxDepth?: number | null
+  /** Show only this partner of the top person, and only that couple's children. */
+  partnerFilterId?: string | null
+}
+
+export interface ViewLayout {
+  layout: LayoutedRoot
+  /**
+   * Children of the top couple left out of a partner-filtered view because
+   * their other parent isn't recorded, so it can't be told which marriage
+   * they belong to. An admin should fix their parents.
+   */
+  ambiguousChildIds: string[]
+}
+
+/**
+ * Lays out a saved view: the tree below `topPersonId`, with the same
+ * node/edge/position rules as the full branch. Only the top level differs:
+ *  - `partnerFilterId` keeps just that partner beside the top person and just
+ *    the children of that couple (children with an unrecorded other parent
+ *    are left out and reported in `ambiguousChildIds`);
+ *  - the top person's children are included whichever branch they belong to
+ *    (so a view can start at a woman who married into another family).
+ * Everyone below the top level shows with all their partners, as usual.
+ */
+export function computeViewLayout(
+  topPersonId: string,
+  roots: RootRow[],
+  people: PersonRow[],
+  partnerships: PartnershipRow[],
+  parentChildRows: ParentChildRow[],
+  { maxDepth, partnerFilterId }: ViewLayoutOptions = {},
+): ViewLayout | null {
+  const base = buildContext(people, partnerships, parentChildRows)
+  const top = base.peopleById.get(topPersonId)
+  const root = top && roots.find(r => r.id === top.root_id)
+  if (!top || !root) return null
+
+  const ambiguous = new Set<string>()
+  const ctx: BuildContext = {
+    ...base,
+    // Only people drawn as someone's child *inside this view* are shown as
+    // a reference when they appear as a partner; a wife whose parents are
+    // outside the view gets a normal node.
+    childIdsSet: descendantIds(top.id, base),
+    visited: new Set<string>(),
+    maxDepth: maxDepth ?? Infinity,
+    top: { partnerFilterId: partnerFilterId ?? null, ambiguous },
+  }
+
+  const rootNode = buildTreeNode(top, ctx, 0)
+  return { layout: positionTree(root, rootNode, 100), ambiguousChildIds: [...ambiguous] }
+}
+
+/** Everyone who can be drawn as a child below `personId` (children of them and their partners, recursively). */
+function descendantIds(personId: string, ctx: BaseContext): Set<string> {
+  const result = new Set<string>()
+  const queue = [personId]
+  const seen = new Set(queue)
+  while (queue.length > 0) {
+    const id = queue.shift()!
+    for (const pid of [id, ...(ctx.partnerMap.get(id) ?? [])]) {
+      for (const cid of ctx.childrenMap.get(pid) ?? []) {
+        result.add(cid)
+        if (!seen.has(cid)) { seen.add(cid); queue.push(cid) }
+      }
+    }
+  }
+  result.delete(personId)
+  return result
+}
+
+/** Positions a built tree and derives its flat node list and edges. */
+function positionTree(root: RootRow, rootNode: TreeNode, offsetX: number): LayoutedRoot {
+  // Compute subtree widths bottom-up, then assign x/y positions top-down
+  assignPositions(rootNode, offsetX, 100)
+  const allNodes = flattenTree(rootNode)
+  return {
+    root,
+    rootNode,
+    allNodes,
+    edges: buildEdges(allNodes),
+    partnershipEdges: buildPartnershipEdges(allNodes),
+  }
 }
 
 /**
@@ -151,20 +220,49 @@ export function computeDepthFromRoot(
 
 // ── Tree building ─────────────────────────────────────────────────────────────
 
-function buildTreeNode(
-  person: PersonRow,
-  peopleById: Map<string, PersonRow>,
-  partnerMap: Map<string, string[]>,
-  childrenMap: Map<string, string[]>,
-  childIdsSet: Set<string>,
-  visited: Set<string>,
-  depth: number,
-  maxDepth: number,
-): TreeNode {
+interface BaseContext {
+  peopleById: Map<string, PersonRow>
+  partnerMap: Map<string, string[]>
+  childrenMap: Map<string, string[]>
+  /** child id → ids of their parents in parent_child */
+  parentsMap: Map<string, string[]>
+}
+
+interface BuildContext extends BaseContext {
+  childIdsSet: Set<string>
+  visited: Set<string>
+  maxDepth: number
+  /** Saved-view rules for the top person (depth 0) only. */
+  top?: { partnerFilterId: string | null; ambiguous: Set<string> }
+}
+
+function buildContext(
+  people: PersonRow[],
+  partnerships: PartnershipRow[],
+  parentChildRows: ParentChildRow[],
+): BaseContext {
+  const parentsMap = new Map<string, string[]>()
+  for (const pc of parentChildRows) {
+    if (!parentsMap.has(pc.child_id)) parentsMap.set(pc.child_id, [])
+    parentsMap.get(pc.child_id)!.push(pc.parent_id)
+  }
+  return {
+    peopleById: new Map<string, PersonRow>(people.map(p => [p.id, p])),
+    partnerMap: buildPartnerMap(partnerships),
+    childrenMap: buildChildrenMap(parentChildRows),
+    parentsMap,
+  }
+}
+
+function buildTreeNode(person: PersonRow, ctx: BuildContext, depth: number): TreeNode {
+  const { peopleById, partnerMap, childrenMap, childIdsSet, visited, maxDepth } = ctx
+  const topRules = depth === 0 ? ctx.top : undefined
+  const partnerFilterId = topRules?.partnerFilterId ?? null
   visited.add(person.id)
 
   // Build partner nodes (laid out horizontally, never recursed into)
-  const partnerIds = partnerMap.get(person.id) ?? []
+  const partnerIds = (partnerMap.get(person.id) ?? [])
+    .filter(pid => !partnerFilterId || pid === partnerFilterId)
   const partnerNodes: TreeNode[] = []
   for (const pid of partnerIds) {
     const p = peopleById.get(pid)
@@ -192,19 +290,30 @@ function buildTreeNode(
   // the mother (parent_child.parent_id = mother.id) still appears under
   // the original/father node rather than going orphaned.
   const ownChildIds = childrenMap.get(person.id) ?? []
-  const partnerChildIds = partnerNodes
-    .filter(pn => !pn.isReference && pn.person.root_id === person.root_id)
-    .flatMap(pn => childrenMap.get(pn.person.id) ?? [])
-  const allChildIds = [...new Set([...ownChildIds, ...partnerChildIds])]
+  const partnerChildIds = partnerFilterId
+    // A partner-filtered top couple: the filtered partner's children too,
+    // whatever their branch — the couple filter below sorts them out.
+    ? childrenMap.get(partnerFilterId) ?? []
+    : partnerNodes
+      .filter(pn => !pn.isReference && pn.person.root_id === person.root_id)
+      .flatMap(pn => childrenMap.get(pn.person.id) ?? [])
+  let allChildIds = [...new Set([...ownChildIds, ...partnerChildIds])]
+  if (partnerFilterId && topRules) {
+    allChildIds = allChildIds.filter(cid =>
+      isChildOfCouple(cid, person.id, partnerFilterId, ctx, topRules.ambiguous))
+  }
 
   // A child is linked to both parents, so it can be reached from either one.
   // Only draw it in its own branch (a mother who married in from another
   // family must not pull her children into her birth family's tree), and
   // only once (the visited check below runs per child, right before it is
-  // built, so a sibling's subtree that already placed it wins).
+  // built, so a sibling's subtree that already placed it wins). A saved
+  // view's top person is the exception: it shows their children wherever
+  // those belong.
   const unvisitedChildren = allChildIds
     .map(cid => peopleById.get(cid))
-    .filter((p): p is PersonRow => !!p && !visited.has(p.id) && p.root_id === person.root_id)
+    .filter((p): p is PersonRow =>
+      !!p && !visited.has(p.id) && (!!topRules || p.root_id === person.root_id))
 
   // Depth cap reached and there's real children below: stop recursing and
   // flag this node so the UI can offer a "show more generations" action
@@ -215,13 +324,34 @@ function buildTreeNode(
   if (!truncated) {
     for (const p of unvisitedChildren) {
       if (visited.has(p.id)) continue
-      childNodes.push(
-        buildTreeNode(p, peopleById, partnerMap, childrenMap, childIdsSet, visited, depth + 1, maxDepth)
-      )
+      childNodes.push(buildTreeNode(p, ctx, depth + 1))
     }
   }
 
   return { person, x: 0, y: 0, partners: partnerNodes, children: childNodes, truncated }
+}
+
+/**
+ * Whether `childId` is a child of the couple `aId` + `bId`: linked to both
+ * (through parent_child or mother_id). A child linked to only one of them,
+ * with no other parent recorded at all, can't be placed in a marriage —
+ * it's added to `ambiguous` and left out.
+ */
+function isChildOfCouple(
+  childId: string,
+  aId: string,
+  bId: string,
+  ctx: BaseContext,
+  ambiguous: Set<string>,
+): boolean {
+  const child = ctx.peopleById.get(childId)
+  const parents = new Set(ctx.parentsMap.get(childId) ?? [])
+  if (child?.mother_id) parents.add(child.mother_id)
+  const linkedA = parents.has(aId)
+  const linkedB = parents.has(bId)
+  if (linkedA && linkedB) return true
+  if (parents.size === 1 && (linkedA || linkedB)) ambiguous.add(childId)
+  return false
 }
 
 // ── Width computation (bottom-up) ─────────────────────────────────────────────
@@ -254,14 +384,7 @@ function computeSubtreeWidth(node: TreeNode): number {
 
 // ── Position assignment (top-down) ────────────────────────────────────────────
 
-function assignPositions(
-  node: TreeNode,
-  x: number,
-  y: number,
-  partnerMap: Map<string, string[]>,
-  childrenMap: Map<string, string[]>,
-  peopleById: Map<string, PersonRow>,
-): void {
+function assignPositions(node: TreeNode, x: number, y: number): void {
   const coupleCount = 1 + node.partners.length
   const coupleWidth = coupleCount * NODE_WIDTH + (coupleCount - 1) * PARTNER_GAP
 
@@ -297,7 +420,7 @@ function assignPositions(
     const stackLeft = coupleMidX - maxChildCoupleWidth / 2
     let stackY = childY
     for (const child of node.children) {
-      assignPositions(child, stackLeft, stackY, partnerMap, childrenMap, peopleById)
+      assignPositions(child, stackLeft, stackY)
       stackY += NODE_HEIGHT + LEAF_V_GAP
     }
     return
@@ -312,7 +435,7 @@ function assignPositions(
   let childX = coupleMidX - totalChildrenWidth / 2
 
   for (let i = 0; i < node.children.length; i++) {
-    assignPositions(node.children[i], childX, childY, partnerMap, childrenMap, peopleById)
+    assignPositions(node.children[i], childX, childY)
     childX += childrenWidths[i] + H_GAP
   }
 }

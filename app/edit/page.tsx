@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { headers } from 'next/headers'
 import { createPublicClient } from '@/lib/supabase/server'
 import TreeApp from '@/components/branch/TreeApp'
+import { loadSavedViews } from '@/lib/views-server'
 import NotAnAdmin from '@/components/auth/NotAnAdmin'
 import ServerConfigError from '@/components/auth/ServerConfigError'
 import { readAuthHeader } from '@/lib/auth/headers'
@@ -9,9 +10,9 @@ import { readAuthHeader } from '@/lib/auth/headers'
 export default async function EditPage({
   searchParams,
 }: {
-  searchParams: Promise<{ root?: string; focus?: string }>
+  searchParams: Promise<{ root?: string; focus?: string; view?: string }>
 }) {
-  const { root, focus } = await searchParams
+  const { root, focus, view } = await searchParams
 
   // Resolved once by middleware.ts — see its comment for why the page
   // must not independently re-check auth.getUser() / query `admins`.
@@ -35,6 +36,7 @@ export default async function EditPage({
     { data: people },
     { data: partnerships },
     { data: parentChild },
+    savedViews,
   ] = await Promise.all([
     supabase.from('roots').select('*').order('created_at'),
     // Fixed order: the database otherwise returns rows in whatever order
@@ -42,6 +44,7 @@ export default async function EditPage({
     supabase.from('people').select('*').order('created_at').order('id'),
     supabase.from('partnerships').select('*').order('created_at').order('id'),
     supabase.from('parent_child').select('*').order('created_at').order('id'),
+    loadSavedViews(supabase),
   ])
 
   return (
@@ -55,6 +58,8 @@ export default async function EditPage({
       initialParentChild={parentChild ?? []}
       initialRootId={root ?? null}
       initialFocusId={focus ?? null}
+      initialSavedViews={savedViews}
+      initialViewId={view ?? null}
     />
   )
 }
