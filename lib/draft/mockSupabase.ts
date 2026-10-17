@@ -27,6 +27,9 @@ const UNIQUE_KEYS: Record<string, string[][]> = {
 export function createMockDb() {
   const tables: Record<string, Row[]> = { roots: [], people: [], partnerships: [], parent_child: [] }
   const failures: { table: string; op: string; mode: FailureMode }[] = []
+  // Like RLS: a refused update/delete doesn't error, it just touches 0 rows.
+  const refused = new Set<string>()
+  let isOwner = true
   const uploads: string[] = []
   let storageFailures = 0
 
@@ -56,8 +59,14 @@ export function createMockDb() {
     private payload: Row = {}
     private filters: Filter[] = []
     private limitN = Infinity
+    private returning = false
     constructor(private table: string) {}
-    select() { if (this.op !== 'insert') this.op = 'select'; return this }
+    select() {
+      // After update/delete, .select() asks for the affected rows back.
+      if (this.op === 'update' || this.op === 'delete') this.returning = true
+      else if (this.op !== 'insert') this.op = 'select'
+      return this
+    }
     insert(row: Row) { this.op = 'insert'; this.payload = row; return this }
     update(v: Row) { this.op = 'update'; this.payload = v; return this }
     delete() { this.op = 'delete'; return this }
@@ -86,11 +95,13 @@ export function createMockDb() {
           result = { data: null, error: null }
         }
       } else if (this.op === 'update') {
-        rows.filter(match).forEach(r => Object.assign(r, this.payload))
-        result = { data: null, error: null }
+        const hit = refused.has(`${this.table}:update`) ? [] : rows.filter(match)
+        hit.forEach(r => Object.assign(r, this.payload))
+        result = { data: this.returning ? hit.map(r => ({ id: r.id })) : null, error: null }
       } else if (this.op === 'delete') {
-        tables[this.table] = rows.filter(r => !match(r))
-        result = { data: null, error: null }
+        const hit = refused.has(`${this.table}:delete`) ? [] : rows.filter(match)
+        tables[this.table] = rows.filter(r => !hit.includes(r))
+        result = { data: this.returning ? hit.map(r => ({ id: r.id })) : null, error: null }
       } else {
         result = { data: rows.filter(match).slice(0, this.limitN).map(r => ({ ...r })), error: null }
       }
@@ -104,6 +115,8 @@ export function createMockDb() {
 
   const client = {
     from: (table: string) => new Query(table),
+    rpc: async (fn: string) =>
+      fn === 'is_owner' ? { data: isOwner, error: null } : { data: null, error: { message: `no rpc ${fn}` } },
     storage: {
       from: () => ({
         upload: async (path: string) => {
@@ -125,5 +138,9 @@ export function createMockDb() {
     uploads,
     failNext: (table: string, op: string, mode: FailureMode = 'before') => failures.push({ table, op, mode }),
     failNextUpload: () => { storageFailures += 1 },
+    /** Make `op` on `table` silently affect 0 rows, as RLS does for a refused write. */
+    refuse: (table: string, op: 'update' | 'delete') => refused.add(`${table}:${op}`),
+    /** Log in as an editor (not the owner): is_owner() returns false. */
+    actAsEditor: () => { isOwner = false },
   }
 }

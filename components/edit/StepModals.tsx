@@ -59,3 +59,32 @@ export function AskGenderModal({
     </Modal>
   )
 }
+
+/** Confirms removing a marriage (the link only — both people stay). */
+export function ConfirmRemovePartnerModal({
+  isOpen,
+  names,
+  onConfirm,
+  onCancel,
+}: {
+  isOpen: boolean
+  /** e.g. «محمد مصطفى و سارة» */
+  names: string
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <Modal isOpen={isOpen} onClose={onCancel} maxWidth="max-w-sm">
+      <div className="px-6 pt-7 pb-6 flex flex-col gap-5">
+        <h3 className="font-sans text-2xl font-bold text-charcoal">هل تريد إزالة هذا الزواج؟</h3>
+        <p className="font-sans text-lg text-walnut-light leading-relaxed">
+          سيُزال الزواج بين {names}. لن يُحذف أي شخص.
+        </p>
+        <div className="flex flex-col gap-3">
+          <Button variant="danger" onClick={onConfirm} className="w-full">إزالة الزواج</Button>
+          <Button variant="ghost" size="sm" onClick={onCancel} className="w-full">إلغاء</Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}

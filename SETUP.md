@@ -2,7 +2,7 @@
 
 ## Applying migrations on a new Supabase project
 
-Run `supabase/migrations/001_initial_schema.sql` through `005_saved_views.sql`
+Run `supabase/migrations/001_initial_schema.sql` through `006_editors_can_relink.sql`
 **in order** — each one depends on the schema the previous one created.
 This matters more than it used to: since 2026-05-30, new Supabase projects
 no longer auto-grant table access to the `anon`/`authenticated` roles by
@@ -15,32 +15,65 @@ configuration error) instead of the usual "not an admin" screen, this is
 the first thing to check — look at your deployment's function logs for the
 exact Postgres error `middleware.ts` logs.
 
-## Adding a new admin (editor or owner)
+## One-time dashboard settings (do these before giving anyone access)
 
-There is no self-service signup. Every admin account is created manually by
-the owner, in two steps:
+These live in the Supabase dashboard, not in the code or the migrations:
 
-**1. Create the user in Supabase Auth**
+1. **Turn off public sign-ups.** **Authentication → Sign In / Providers** →
+   turn **off** "Allow new users to sign up". Otherwise anyone can create an
+   account through the public API. Such an account gets no edit rights (it
+   isn't in `admins`), but it's junk you'd have to clean up.
+2. **Set the site address.** **Authentication → URL Configuration → Site
+   URL** = `https://al-mustafa-family.netlify.app`. Otherwise any link in an
+   auth email (invite, password reset) points at `localhost`.
 
-Supabase dashboard → **Authentication → Users → Add user** → enter their
-email and a password (or send a magic invite, if preferred), then save.
-Copy the generated user's UUID (shown in the users table).
+## إضافة محرر جديد — Adding an editor
 
-**2. Give them a role in the `admins` table**
+There is no self-service signup. The owner creates every account by hand.
 
-Supabase dashboard → **SQL Editor** → run:
+**What an editor can and can't do.** An editor (`role = 'editor'`) can add
+people, marriages and children, edit profiles and photos, correct a
+person's «الأب» / «الأم», remove a marriage (the link only — both people
+stay), and manage the saved views. Only the owner (`role = 'owner'`) can
+delete a person or a whole family branch.
+
+**1. Create the user.** Supabase dashboard → **Authentication → Users →
+Add user** → enter their email and a password, and tick **Auto Confirm
+User** (there's no email-confirmation flow). Save, then copy the new
+user's UUID from the users table.
+
+**2. Make them an editor.** Supabase dashboard → **SQL Editor** → run:
 
 ```sql
 insert into admins (id, role, name)
-values ('<the user''s UUID from step 1>', 'editor', 'Their Name');
+values ('<the UUID from step 1>', 'editor', 'Their Name');
 ```
 
-Use `role = 'owner'` instead of `'editor'` if they should also be able to
-delete people, partnerships, roots, and parent/child links. Everyone with a
-row in `admins` (either role) can add and edit; only `'owner'` can delete.
+They can now sign in at `/login` and edit at `/edit`. Give them the email
+and password from step 1 privately (e.g. by phone). Use `'owner'` instead
+of `'editor'` only for someone who should also be able to delete people.
 
-That's it — they can now sign in at `/login` with the email/password from
-step 1 and get full edit access at `/edit`.
+### Removing an editor
+
+SQL Editor:
+
+```sql
+delete from admins where id = '<their UUID>';
+```
+
+That takes their edit rights away immediately. Then delete the login too:
+**Authentication → Users** → find them → **Delete user**. Nothing they
+added or edited is removed.
+
+### Resetting a forgotten password
+
+The simplest way, with no emails involved:
+
+1. **Authentication → Users** → find them → **Delete user**.
+2. **Add user** again with the same email and a new password (tick
+   **Auto Confirm User**), and copy the **new** UUID.
+3. Re-insert their `admins` row with the new UUID (step 2 above) — the
+   old row went away with the deleted user.
 
 ## Avatars storage bucket
 

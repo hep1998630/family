@@ -16,7 +16,7 @@ import SavedViewPanel from '@/components/views/SavedViewPanel'
 import SavedViewManager from '@/components/views/SavedViewManager'
 import ViewBuilder from '@/components/views/ViewBuilder'
 import PeopleListPanel from '@/components/edit/PeopleListPanel'
-import { AskGenderModal, NeedPartnerModal } from '@/components/edit/StepModals'
+import { AskGenderModal, ConfirmRemovePartnerModal, NeedPartnerModal } from '@/components/edit/StepModals'
 import { useRoots } from '@/hooks/useRoots'
 import { usePeople } from '@/hooks/usePeople'
 import { usePartnerships } from '@/hooks/usePartnerships'
@@ -60,6 +60,7 @@ type ModalState =
   | { type: 'needPartner'; personId: string }
   | { type: 'askGender'; personId: string; next: 'addPartner' | 'addChild' }
   | { type: 'addRoot' }
+  | { type: 'removePartner'; partnershipId: string; names: string }
 
 export default function TreeApp({
   isEditable,
@@ -471,14 +472,23 @@ export default function TreeApp({
     selectBranch(newRoot.id)
   }, [addRoot, addPerson, selectBranch])
 
-  const handleRemovePartner = useCallback(async (ownerPersonId: string, refPersonId: string) => {
+  // Asks first («هل تريد إزالة هذا الزواج؟»); the removal itself is handleConfirmRemovePartner.
+  const handleRemovePartner = useCallback((ownerPersonId: string, refPersonId: string) => {
     const partnership = partnerships.find(p =>
       (p.person_a_id === ownerPersonId && p.person_b_id === refPersonId) ||
       (p.person_b_id === ownerPersonId && p.person_a_id === refPersonId)
     )
-    if (!partnership) return
-    await removePartnership(partnership.id)
-  }, [partnerships, removePartnership])
+    const owner = peopleById.get(ownerPersonId)
+    const ref = peopleById.get(refPersonId)
+    if (!partnership || !owner || !ref) return
+    setModal({ type: 'removePartner', partnershipId: partnership.id, names: `${lineage.label(owner)} و${lineage.label(ref)}` })
+  }, [partnerships, peopleById, lineage])
+
+  const handleConfirmRemovePartner = useCallback(async () => {
+    if (modal.type !== 'removePartner') return
+    setModal({ type: 'none' })
+    await removePartnership(modal.partnershipId)
+  }, [modal, removePartnership])
 
   const handleCloseModal = useCallback(() => setModal({ type: 'none' }), [])
   const modalPerson = 'personId' in modal ? peopleById.get(modal.personId) ?? null : null
@@ -750,6 +760,13 @@ export default function TreeApp({
           options: partnersOf(modalPerson.id, partnerships, peopleById),
         } : undefined}
         onConfirm={handleConfirmAddChild}
+        onCancel={handleCloseModal}
+      />
+
+      <ConfirmRemovePartnerModal
+        isOpen={modal.type === 'removePartner'}
+        names={modal.type === 'removePartner' ? modal.names : ''}
+        onConfirm={handleConfirmRemovePartner}
         onCancel={handleCloseModal}
       />
 
