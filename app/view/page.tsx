@@ -1,12 +1,13 @@
 import { createPublicClient } from '@/lib/supabase/server'
 import TreeApp from '@/components/branch/TreeApp'
+import { loadSavedViews } from '@/lib/views-server'
 
 export default async function ViewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ root?: string; focus?: string }>
+  searchParams: Promise<{ root?: string; focus?: string; view?: string }>
 }) {
-  const { root, focus } = await searchParams
+  const { root, focus, view } = await searchParams
   const supabase = createPublicClient()
 
   // Fetch all data server-side for initial render (SSR) — public reads,
@@ -19,11 +20,15 @@ export default async function ViewPage({
     { data: people },
     { data: partnerships },
     { data: parentChild },
+    savedViews,
   ] = await Promise.all([
     supabase.from('roots').select('*').order('created_at'),
-    supabase.from('people').select('*'),
-    supabase.from('partnerships').select('*'),
-    supabase.from('parent_child').select('*'),
+    // Fixed order: the database otherwise returns rows in whatever order
+    // they're stored, which shifts when a row is edited.
+    supabase.from('people').select('*').order('created_at').order('id'),
+    supabase.from('partnerships').select('*').order('created_at').order('id'),
+    supabase.from('parent_child').select('*').order('created_at').order('id'),
+    loadSavedViews(supabase),
   ])
 
   return (
@@ -35,6 +40,8 @@ export default async function ViewPage({
       initialParentChild={parentChild ?? []}
       initialRootId={root ?? null}
       initialFocusId={focus ?? null}
+      initialSavedViews={savedViews}
+      initialViewId={view ?? null}
     />
   )
 }

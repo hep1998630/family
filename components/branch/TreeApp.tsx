@@ -11,6 +11,10 @@ import AddRootModal from '@/components/edit/AddRootModal'
 import EditToolbar, { SaveErrorBanner } from '@/components/edit/EditToolbar'
 import FamilyView from '@/components/family/FamilyView'
 import ZoomableTree from '@/components/tree/ZoomableTree'
+import SavedViewCards from '@/components/views/SavedViewCards'
+import SavedViewPanel from '@/components/views/SavedViewPanel'
+import SavedViewManager from '@/components/views/SavedViewManager'
+import ViewBuilder from '@/components/views/ViewBuilder'
 import PeopleListPanel from '@/components/edit/PeopleListPanel'
 import { AskGenderModal, NeedPartnerModal } from '@/components/edit/StepModals'
 import { useRoots } from '@/hooks/useRoots'
@@ -18,9 +22,10 @@ import { usePeople } from '@/hooks/usePeople'
 import { usePartnerships } from '@/hooks/usePartnerships'
 import { useParentChild } from '@/hooks/useParentChild'
 import { useEditDraft } from '@/hooks/useEditDraft'
-import { computeLayout, computeDepthFromRoot, findRootPerson } from '@/lib/tree/layout'
+import { useSavedViews, type SavedViewInput } from '@/hooks/useSavedViews'
+import { computeLayout, computeDepthFromRoot, computeViewLayout, findRootPerson } from '@/lib/tree/layout'
 import { buildLineage, closeFamilyIds, partnersOf } from '@/lib/tree/lineage'
-import type { PersonRow, PartnershipRow, ParentChildRow, RootRow } from '@/lib/supabase/types'
+import type { PersonRow, PartnershipRow, ParentChildRow, RootRow, SavedViewRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
 
 const DEFAULT_MAX_DEPTH = 3
@@ -29,7 +34,9 @@ const EXPAND_INCREMENT = 2
 const PHONE_QUERY = '(max-width: 767px)'
 const VIEW_STORAGE_KEY = 'family-tree:view'
 
-type ViewMode = 'family' | 'tree'
+/** 'views' = the admins' saved views («العروض»); never remembered as the default. */
+type ViewMode = 'family' | 'tree' | 'views'
+type DefaultViewMode = Exclude<ViewMode, 'views'>
 
 interface TreeAppProps {
   isEditable: boolean
@@ -41,6 +48,9 @@ interface TreeAppProps {
   initialParentChild: ParentChildRow[]
   initialRootId?: string | null
   initialFocusId?: string | null
+  initialSavedViews?: SavedViewRow[]
+  /** Open this saved view (from /view?view=<id>). */
+  initialViewId?: string | null
 }
 
 type ModalState =
@@ -61,6 +71,8 @@ export default function TreeApp({
   initialParentChild,
   initialRootId = null,
   initialFocusId = null,
+  initialSavedViews = [],
+  initialViewId = null,
 }: TreeAppProps) {
   const router = useRouter()
   const pathname = usePathname()
@@ -93,7 +105,12 @@ export default function TreeApp({
   const lineage = useMemo(() => buildLineage(people, parentChildRows), [people, parentChildRows])
 
   // ── Branch selection + URL sync ───────────────────────────────
-  const [selectedRootId, setSelectedRootIdState] = useState<string | null>(initialRootId)
+  const [selectedRootId, setSelectedRootIdState] = useState<string | null>(() => {
+    if (initialRootId || !initialViewId) return initialRootId
+    // A shared view link opens inside the top person's branch.
+    const view = initialSavedViews.find(v => v.id === initialViewId)
+    return initialPeople.find(p => p.id === view?.top_person_id)?.root_id ?? null
+  })
   const [maxDepth, setMaxDepth] = useState(DEFAULT_MAX_DEPTH)
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(initialFocusId)
   // Family view focus stack; empty means the branch founder.
@@ -112,6 +129,9 @@ export default function TreeApp({
   }, [setSelectedRootId])
 
   const backToBranches = useCallback(() => {
+    setBuilder(null)
+    setActiveViewId(null)
+    if (viewModeRef.current === 'views') setViewModeState(defaultModeRef.current)
     setSelectedRootId(null)
   }, [setSelectedRootId])
 
@@ -123,7 +143,15 @@ export default function TreeApp({
     if (!person) return
     const neededDepth = computeDepthFromRoot(personId, parentChildRows) + 1
     setMaxDepth(Math.max(DEFAULT_MAX_DEPTH, neededDepth))
-    if (person.root_id !== effectiveRootIdRef.current) setSelectedRootId(person.root_id)
+    if (viewModeRef.current === 'views') {
+      // Searching or following a link from a saved view opens the full tree / family view.
+      setBuilder(null)
+      setActiveViewId(null)
+      setViewModeState(defaultModeRef.current)
+      setSelectedRootId(person.root_id)
+    } else if (person.root_id !== effectiveRootIdRef.current) {
+      setSelectedRootId(person.root_id)
+    }
     setPendingFocusId(personId)
     focusFamilyRef.current(personId)
   }, [peopleById, parentChildRows, setSelectedRootId])
@@ -159,17 +187,81 @@ export default function TreeApp({
   // ── View mode: phone-first family view, or the full tree ─────
   // null until mounted, so the server render doesn't guess the screen size.
   const [viewMode, setViewModeState] = useState<ViewMode | null>(null)
+  // The family/tree choice to return to when leaving the saved views.
+  const defaultModeRef = useRef<DefaultViewMode>('tree')
+  // Only the first load decides: later URL changes (opening/closing a view)
+  // re-render the page with new initial* props, which must not reset the tab.
+  const openedWithViewRef = useRef(!!initialViewId)
   useEffect(() => {
     let saved: string | null = null
     try { saved = window.localStorage.getItem(VIEW_STORAGE_KEY) } catch { /* private mode */ }
-    setViewModeState(saved === 'family' || saved === 'tree'
+    defaultModeRef.current = saved === 'family' || saved === 'tree'
       ? saved
-      : window.matchMedia(PHONE_QUERY).matches ? 'family' : 'tree')
+      : window.matchMedia(PHONE_QUERY).matches ? 'family' : 'tree'
+    setViewModeState(openedWithViewRef.current ? 'views' : defaultModeRef.current)
   }, [])
+
+  // ── Saved views («العروض») ───────────────────────────────────
+  const savedViewsApi = useSavedViews(initialSavedViews)
+  const savedViews = savedViewsApi.views
+  const [activeViewId, setActiveViewId] = useState<string | null>(initialViewId)
+  const activeView = activeViewId ? savedViews.find(v => v.id === activeViewId) ?? null : null
+  // Admin view builder: editing `viewId`, or creating one (optionally starting at `topPersonId`).
+  const [builder, setBuilder] = useState<{ viewId?: string; topPersonId?: string } | null>(null)
+
+  /** `view` can be passed when it was just saved and isn't in `savedViews` yet. */
+  const openView = useCallback((viewId: string, view = savedViews.find(v => v.id === viewId)) => {
+    const top = view && peopleById.get(view.top_person_id)
+    if (!view || !top) return
+    setBuilder(null)
+    setActiveViewId(viewId)
+    setViewModeState('views')
+    setSelectedRootIdState(top.root_id)
+    router.replace(`${pathname}?view=${encodeURIComponent(viewId)}`, { scroll: false })
+  }, [savedViews, peopleById, router, pathname])
+
+  const openBuilder = useCallback((target: { viewId?: string; topPersonId?: string }) => {
+    const top = target.topPersonId && peopleById.get(target.topPersonId)
+    if (top) setSelectedRootIdState(top.root_id)
+    setBuilder(target)
+    setViewModeState('views')
+  }, [peopleById])
+
+  const saveBuilder = useCallback(async (input: SavedViewInput) => {
+    const result = builder?.viewId
+      ? await savedViewsApi.update(builder.viewId, input)
+      : await savedViewsApi.create(input)
+    if (result.error !== null) return result.error
+    openView(result.data.id, result.data)
+    return null
+  }, [builder, savedViewsApi, openView])
+
+  /** Leaves an open view (back to the list, or to another tab). */
+  const closeView = useCallback(() => {
+    setActiveViewId(null)
+    setSelectedRootId(effectiveRootIdRef.current)
+  }, [setSelectedRootId])
+
   const setViewMode = useCallback((mode: ViewMode) => {
     setViewModeState(mode)
-    try { window.localStorage.setItem(VIEW_STORAGE_KEY, mode) } catch { /* private mode */ }
-  }, [])
+    if (mode !== 'views') {
+      setBuilder(null)
+      defaultModeRef.current = mode
+      try { window.localStorage.setItem(VIEW_STORAGE_KEY, mode) } catch { /* private mode */ }
+      if (activeViewId) closeView()
+    }
+  }, [activeViewId, closeView])
+  const viewModeRef = useRef(viewMode)
+  viewModeRef.current = viewMode
+
+  const viewLayout = useMemo(() => activeView
+    ? computeViewLayout(activeView.top_person_id, roots, people, partnerships, parentChildRows, {
+        maxDepth: activeView.depth,
+        partnerFilterId: activeView.partner_id,
+      })
+    : null,
+    [activeView, roots, people, partnerships, parentChildRows]
+  )
 
   // ── Family view focus + back history ─────────────────────────
   const familyTop = familyHistory.length > 0 ? resolveId(familyHistory[familyHistory.length - 1]) : null
@@ -458,15 +550,18 @@ export default function TreeApp({
           </div>
 
           {(selectedRoot || !isEditable) && (
-            <div className={`flex items-center gap-2 min-w-0 ${selectedRoot ? '' : 'md:hidden'}`}>
-              {selectedRoot && viewMode && <ViewToggle value={viewMode} onChange={setViewMode} />}
+            <div className={`flex flex-wrap items-center gap-2 min-w-0 ${selectedRoot ? '' : 'md:hidden'}`}>
+              {selectedRoot && viewMode && (
+                <ViewToggle value={viewMode} onChange={setViewMode} showViews={isEditable || savedViews.length > 0} />
+              )}
               {isEditable && selectedRoot && (
                 <span className="md:hidden flex-1 min-w-0 truncate font-sans text-lg font-bold text-charcoal">
                   {selectedRoot.name}
                 </span>
               )}
-              {!isEditable && (
-                <SearchBar people={searchablePeople} onSelectPerson={navigateToPerson} className="flex-1 md:hidden" />
+              {/* On a phone an open saved view needs the room more than search does. */}
+              {!isEditable && !(viewMode === 'views' && activeView) && (
+                <SearchBar people={searchablePeople} onSelectPerson={navigateToPerson} className="flex-1 min-w-[9rem] md:hidden" />
               )}
             </div>
           )}
@@ -483,10 +578,77 @@ export default function TreeApp({
               isEditable={isEditable}
               onSelect={selectBranch}
               onAddRoot={() => setModal({ type: 'addRoot' })}
-            />
+            >
+              {activeViewId && !activeView && (
+                <p role="alert" className="font-sans text-lg text-walnut-light text-center mb-4">لم يعد هذا العرض متاحاً.</p>
+              )}
+              {savedViews.length > 0 && (
+                <SavedViewCards views={savedViews} personFor={id => peopleById.get(id)} onSelect={openView} />
+              )}
+            </BranchPicker>
           </div>
         ) : !viewMode ? (
           <div className="flex-1" />
+        ) : viewMode === 'views' && isEditable && builder ? (
+          <ViewBuilder
+            key={builder.viewId ?? `new:${builder.topPersonId ?? ''}`}
+            view={builder.viewId ? savedViews.find(v => v.id === builder.viewId) : undefined}
+            initialTopPersonId={builder.topPersonId}
+            roots={roots}
+            people={people}
+            peopleById={peopleById}
+            partnerships={partnerships}
+            parentChildRows={parentChildRows}
+            rootNamesById={rootNamesById}
+            lineage={lineage}
+            isUnsaved={draft.isUnsaved}
+            onSave={saveBuilder}
+            onCancel={() => setBuilder(null)}
+          />
+        ) : viewMode === 'views' ? (
+          activeView ? (
+            <SavedViewPanel
+              view={activeView}
+              viewLayout={viewLayout}
+              isEditable={isEditable}
+              peopleById={peopleById}
+              rootNamesById={rootNamesById}
+              lineage={lineage}
+              highlightedPersonId={highlightedPersonId}
+              activeNodeId={activeNodeId}
+              onBackToList={closeView}
+              onEdit={isEditable ? () => openBuilder({ viewId: activeView.id }) : undefined}
+              onClickPerson={handleClickPerson}
+              onActivateNode={handleActivateNode}
+              onAddPartner={handleAddPartner}
+              onAddChild={handleAddChild}
+              onNavigateToOriginal={navigateToPerson}
+              onRemovePartner={handleRemovePartner}
+            />
+          ) : (
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-parchment">
+              <div className="mx-auto w-full max-w-3xl px-4 py-6 flex flex-col gap-4">
+                {activeViewId && (
+                  <p role="alert" className="font-sans text-lg text-walnut-light text-center">لم يعد هذا العرض متاحاً.</p>
+                )}
+                {isEditable ? (
+                  <SavedViewManager
+                    views={savedViews}
+                    personFor={id => peopleById.get(id)}
+                    onOpen={openView}
+                    onCreate={() => openBuilder({})}
+                    onEdit={viewId => openBuilder({ viewId })}
+                    onDelete={savedViewsApi.remove}
+                    onMove={savedViewsApi.move}
+                  />
+                ) : savedViews.length > 0 ? (
+                  <SavedViewCards views={savedViews} personFor={id => peopleById.get(id)} onSelect={openView} />
+                ) : (
+                  <p className="font-sans text-lg text-walnut-light text-center py-10">لا توجد عروض بعد.</p>
+                )}
+              </div>
+            </div>
+          )
         ) : viewMode === 'family' ? (
           <div className="flex-1 min-h-0 bg-parchment">
             {familyFocusId ? (
@@ -552,6 +714,7 @@ export default function TreeApp({
         lineage={lineage}
         onUpdatePerson={handleUpdatePerson}
         onDeletePerson={handleDeletePerson}
+        onCreateView={isEditable ? topPersonId => openBuilder({ topPersonId }) : undefined}
       />
 
       {/* ── Add Partner modal ── */}
@@ -614,10 +777,15 @@ export default function TreeApp({
   )
 }
 
-function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (mode: ViewMode) => void }) {
+function ViewToggle({ value, onChange, showViews }: {
+  value: ViewMode
+  onChange: (mode: ViewMode) => void
+  showViews: boolean
+}) {
   const options: { mode: ViewMode; label: string }[] = [
     { mode: 'family', label: 'العائلة' },
     { mode: 'tree', label: 'الشجرة' },
+    ...(showViews ? [{ mode: 'views' as const, label: 'العروض' }] : []),
   ]
   return (
     <div role="group" aria-label="طريقة العرض" className="flex-shrink-0 flex p-1 gap-1 bg-parchment border-2 border-slate-200 rounded-xl">

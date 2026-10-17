@@ -12,6 +12,8 @@ interface BranchPickerProps {
   isEditable: boolean
   onSelect: (rootId: string) => void
   onAddRoot?: () => void
+  /** Shown under the branch cards (the saved views). */
+  children?: React.ReactNode
 }
 
 export default function BranchPicker({
@@ -21,6 +23,7 @@ export default function BranchPicker({
   isEditable,
   onSelect,
   onAddRoot,
+  children,
 }: BranchPickerProps) {
   const cards = useMemo(() => roots.map(root => {
     const founder = findRootPerson(root.id, people, parentChildRows)
@@ -95,6 +98,7 @@ export default function BranchPicker({
             </button>
           )}
         </div>
+        <div className="w-full mt-10 empty:hidden">{children}</div>
       </div>
     </div>
   )

@@ -6,57 +6,16 @@
 // (never the real database), then checks with Playwright, at desktop and
 // phone sizes, that the tree's scroll box fits the screen, is shorter than
 // the tree, and that a mouse-wheel scroll moves it down.
-import { spawn } from 'node:child_process'
 import { chromium, devices } from 'playwright'
-import { startMockSupabase, TOKEN, USER } from './mock-supabase.mjs'
+import { authCookie, checker, startApp } from './harness.mjs'
 import { makeSeed } from './seed.mjs'
-
-const MOCK_PORT = 54329
-const APP_PORT = 3109
-const APP = `http://localhost:${APP_PORT}`
 
 const seed = makeSeed()
 const ROOT = seed.roots[0].id
-const mock = await startMockSupabase({ port: MOCK_PORT, seed })
-
-const dev = spawn('npx', ['next', 'dev', '-p', String(APP_PORT)], {
-  env: {
-    ...process.env,
-    NEXT_PUBLIC_SUPABASE_URL: `http://localhost:${MOCK_PORT}`,
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: 'e2e-anon-key',
-  },
-  stdio: 'ignore',
-  detached: true,
-})
-const stop = () => {
-  try { process.kill(-dev.pid) } catch { /* already gone */ }
-  mock.close()
-}
-
-/** Cookie @supabase/ssr reads as a signed-in session for the fake's user. */
-function authCookie() {
-  const session = {
-    access_token: TOKEN, refresh_token: 'e2e-refresh-token', token_type: 'bearer',
-    expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, user: USER,
-  }
-  const value = 'base64-' + Buffer.from(JSON.stringify(session)).toString('base64url')
-  return { name: 'sb-localhost-auth-token', value, domain: 'localhost', path: '/' }
-}
-
-const failures = []
-const check = (ok, msg) => {
-  console.log(ok ? '  ✓' : '  ✗', msg)
-  if (!ok) failures.push(msg)
-}
+const { check, finish } = checker()
+const { app, stop } = await startApp({ seed })
 
 try {
-  // Wait for the dev server (first compile can take a while).
-  for (let i = 0; ; i++) {
-    try { if ((await fetch(`${APP}/view`)).ok) break } catch { /* not up yet */ }
-    if (i > 120) throw new Error('dev server did not start')
-    await new Promise(r => setTimeout(r, 1000))
-  }
-
   const browser = await chromium.launch()
   for (const [label, opts] of [
     ['desktop 1280×800', { viewport: { width: 1280, height: 800 } }],
@@ -69,7 +28,7 @@ try {
       if (mode === 'edit') await ctx.addCookies([authCookie()])
       await ctx.addInitScript(() => localStorage.setItem('family-tree:view', 'tree'))
       const page = await ctx.newPage()
-      await page.goto(`${APP}/${mode}?root=${ROOT}`)
+      await page.goto(`${app}/${mode}?root=${ROOT}`)
       await page.waitForSelector('div.branch-scroll .person-node', { timeout: 60_000 })
       await page.waitForTimeout(500)
 
@@ -92,8 +51,6 @@ try {
   }
   await browser.close()
 } finally {
-  stop()
+  await stop()
 }
-
-console.log(failures.length ? `\nFAILED:\n${failures.join('\n')}` : '\nALL PASSED')
-process.exit(failures.length ? 1 : 0)
+finish()
