@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { writeError } from '@/lib/supabase/writes'
 import type { ParentChildRow, InsertParentChild } from '@/lib/supabase/types'
 
 export function useParentChild(initialRows: ParentChildRow[] = []) {
@@ -55,13 +56,11 @@ export function useParentChild(initialRows: ParentChildRow[] = []) {
   const removeParentChild = useCallback(async (id: string): Promise<boolean> => {
     setLoading(true)
     setError(null)
-    const { error } = await supabase
-      .from('parent_child')
-      .delete()
-      .eq('id', id)
+    const err = await writeError(supabase, 'parent_child', id,
+      await supabase.from('parent_child').delete().eq('id', id).select('id'))
 
     setLoading(false)
-    if (error) { setError(error.message); return false }
+    if (err) { setError(err); return false }
     return true
   }, [])
 
