@@ -3,13 +3,15 @@
 import http from 'node:http'
 
 export const TOKEN = 'mock-access-token'
+export const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
 export const USER = { id: '00000000-0000-4000-8000-0000000000aa', email: 'owner@example.com', aud: 'authenticated', role: 'authenticated' }
 
 /**
  * Starts the fake on `port` with `seed` rows; resolves to the http.Server.
  * `missingTables` answer like a table whose migration hasn't been run.
  */
-export function startMockSupabase({ port = 54321, seed = {}, missingTables = [] } = {}) {
+export function startMockSupabase({ port = 54321, seed = {}, missingTables = [], photoDelayMs = 0 } = {}) {
   const PORT = port
   const db = {
     roots: seed.roots ?? [],
@@ -97,7 +99,13 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [] 
     if (url.pathname === '/auth/v1/logout') return send(res, 204)
     if (url.pathname.startsWith('/auth/v1/')) return send(res, 404, { message: 'not mocked' })
 
-    // ── storage ──
+    // ── storage: public photos (a 1×1 PNG; files named missing-* are 404) ──
+    if (req.method === 'GET' && url.pathname.startsWith('/storage/v1/object/public/')) {
+      await new Promise(r => setTimeout(r, photoDelayMs))
+      if (url.pathname.split('/').pop().startsWith('missing-')) return send(res, 404, { message: 'Object not found' })
+      res.writeHead(200, { 'Content-Type': 'image/png', 'Access-Control-Allow-Origin': '*' })
+      return res.end(PNG_1PX)
+    }
     if (url.pathname.startsWith('/storage/v1/object/')) {
       log.push({ table: 'storage', method: req.method, path: url.pathname })
       return send(res, 200, { Key: url.pathname.replace('/storage/v1/object/', '') })
