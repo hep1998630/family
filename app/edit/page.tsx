@@ -37,9 +37,11 @@ export default async function EditPage({
     { data: parentChild },
   ] = await Promise.all([
     supabase.from('roots').select('*').order('created_at'),
-    supabase.from('people').select('*'),
-    supabase.from('partnerships').select('*'),
-    supabase.from('parent_child').select('*'),
+    // Fixed order: the database otherwise returns rows in whatever order
+    // they're stored, which shifts when a row is edited.
+    supabase.from('people').select('*').order('created_at').order('id'),
+    supabase.from('partnerships').select('*').order('created_at').order('id'),
+    supabase.from('parent_child').select('*').order('created_at').order('id'),
   ])
 
   return (

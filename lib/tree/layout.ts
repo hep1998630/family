@@ -87,10 +87,17 @@ export function computeLayout(
 }
 
 /**
- * Finds the topmost ancestor of a root: the person in this root with no
- * parent in parent_child, who is also not a shortcut. Used both by
- * computeLayout and by the branch picker (which needs a founder to show
- * without running full layout).
+ * Finds the founder of a root: the person in this root with no parent in
+ * parent_child, who is also not a shortcut. Used both by computeLayout and
+ * by the branch picker (which needs a founder to show without running full
+ * layout).
+ *
+ * Wives who married in have no parents either, so the founder is the
+ * *earliest-created* parentless person (the add-family flow creates the
+ * founder together with the branch, before any spouse). Never rely on the
+ * order of `people`: the database returns rows in no fixed order, and an
+ * edit can move a row. People added in this session (not saved yet) carry
+ * the current time, so they sort after everyone already saved.
  */
 export function findRootPerson(
   rootId: string,
@@ -99,7 +106,26 @@ export function findRootPerson(
 ): PersonRow | undefined {
   const childIdsSet = new Set(parentChildRows.map(pc => pc.child_id))
   const rootPeople = people.filter(p => p.root_id === rootId && !p.is_shortcut)
-  return rootPeople.find(p => !childIdsSet.has(p.id)) ?? rootPeople[0]
+  const parentless = rootPeople.filter(p => !childIdsSet.has(p.id))
+  return earliestCreated(parentless.length > 0 ? parentless : rootPeople)
+}
+
+/** Earliest `created_at`, ties broken by id — the same answer whatever the input order. */
+function earliestCreated(people: PersonRow[]): PersonRow | undefined {
+  let best: PersonRow | undefined
+  for (const p of people) {
+    if (!best || isCreatedBefore(p, best)) best = p
+  }
+  return best
+}
+
+function isCreatedBefore(a: PersonRow, b: PersonRow): boolean {
+  const byMs = Date.parse(a.created_at) - Date.parse(b.created_at)
+  if (byMs !== 0) return byMs < 0
+  // Same millisecond: Postgres timestamps (same format) still differ in
+  // their microseconds, which compare correctly as text.
+  if (a.created_at !== b.created_at) return a.created_at < b.created_at
+  return a.id < b.id
 }
 
 /**
