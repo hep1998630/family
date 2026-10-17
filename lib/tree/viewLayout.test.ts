@@ -23,7 +23,8 @@ const link = (parent: string, child: string): ParentChildRow => ({ id: `${parent
 //      └─ L  (legacy: only M linked, no mother recorded)
 //  └─ U (M's brother) ─ UK
 const people = [
-  person('grandpa', 'male'), person('M', 'male'), person('U', 'male'), person('UK', 'male'),
+  // Created first, like a real founder (the founder is the earliest-created parentless person).
+  person('grandpa', 'male', { created_at: '2025-12-31T00:00:00.000Z' }), person('M', 'male'), person('U', 'male'), person('UK', 'male'),
   person('W1', 'female'), person('W2', 'female'),
   person('K1', 'male', { mother_id: 'W1' }), person('K2', 'female', { mother_id: 'W1' }),
   person('K3', 'male', { mother_id: 'W2' }), person('L', 'male'),
