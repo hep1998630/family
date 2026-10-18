@@ -1,8 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { useFamilyExport } from '@/components/edit/FamilyExport'
+import { PERMISSION_DENIED } from '@/lib/supabase/writes'
 
 interface EditToolbarProps {
     hasPendingChanges: boolean
@@ -20,7 +22,7 @@ export default function EditToolbar({
 }: EditToolbarProps) {
     return (
         <>
-            {adminName && <AccountMenu adminName={adminName} />}
+            <AccountMenu adminName={adminName || 'المدير'} hasPendingChanges={hasPendingChanges} />
             <button
                 onClick={onSave}
                 disabled={isSaving || !hasPendingChanges}
@@ -69,17 +71,33 @@ export function SaveErrorBanner({ saveError }: { saveError: string }) {
                 text-right flex flex-col gap-1
             "
         >
-            <p>تعذّر حفظ بعض التغييرات. حاول مرة أخرى — ما تم حفظه لن يتكرر.</p>
-            <p dir="ltr" className="text-sm font-normal text-red-600 text-left break-words">
-                {saveError}
-            </p>
+            {saveError.startsWith(PERMISSION_DENIED) ? (
+                // Retrying won't help: this account isn't allowed to make that change.
+                <>
+                    <p className="font-bold">{PERMISSION_DENIED}.</p>
+                    <p>
+                        ما قبله حُفظ. لإلغاء هذا التغيير أعد تحميل الصفحة،
+                        أو اطلب من مالك الموقع أن يجريه.
+                    </p>
+                </>
+            ) : (
+                <>
+                    <p>تعذّر حفظ بعض التغييرات. حاول مرة أخرى — ما تم حفظه لن يتكرر.</p>
+                    <p dir="ltr" className="text-sm font-normal text-red-600 text-left break-words">
+                        {saveError}
+                    </p>
+                </>
+            )}
         </div>
     )
 }
 
-function AccountMenu({ adminName }: { adminName: string }) {
+function AccountMenu({ adminName, hasPendingChanges }: { adminName: string; hasPendingChanges: boolean }) {
     const router = useRouter()
     const [open, setOpen] = useState(false)
+    // Lives here, not in the dropdown, so progress survives the menu closing.
+    const closeMenu = useCallback(() => setOpen(false), [])
+    const familyExport = useFamilyExport(hasPendingChanges, closeMenu)
     const ref = useRef<HTMLDivElement>(null)
 
     useEffect(() => {
@@ -128,6 +146,7 @@ function AccountMenu({ adminName }: { adminName: string }) {
                     <p className="font-sans text-sm text-walnut-light">
                         مسجل الدخول: <span className="font-semibold text-charcoal break-words">{adminName}</span>
                     </p>
+                    {familyExport.button}
                     <button
                         onClick={handleLogout}
                         className="h-12 rounded-xl border-2 border-walnut/30 font-sans text-base font-bold text-walnut hover:border-walnut"
@@ -136,6 +155,7 @@ function AccountMenu({ adminName }: { adminName: string }) {
                     </button>
                 </div>
             )}
+            {familyExport.panel}
         </div>
     )
 }

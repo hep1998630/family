@@ -3,13 +3,18 @@
 import http from 'node:http'
 
 export const TOKEN = 'mock-access-token'
+export const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
 export const USER = { id: '00000000-0000-4000-8000-0000000000aa', email: 'owner@example.com', aud: 'authenticated', role: 'authenticated' }
 
 /**
  * Starts the fake on `port` with `seed` rows; resolves to the http.Server.
  * `missingTables` answer like a table whose migration hasn't been run.
+ * `refuse` lists writes RLS refuses, e.g. [['parent_child', 'DELETE']]: like
+ * the real database they "succeed" while changing 0 rows.
  */
-export function startMockSupabase({ port = 54321, seed = {}, missingTables = [] } = {}) {
+export function startMockSupabase({ port = 54321, seed = {}, missingTables = [], refuse = [], photoDelayMs = 0 } = {}) {
+  const refused = (table, method) => refuse.some(([t, m]) => t === table && m === method)
   const PORT = port
   const db = {
     roots: seed.roots ?? [],
@@ -97,10 +102,24 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [] 
     if (url.pathname === '/auth/v1/logout') return send(res, 204)
     if (url.pathname.startsWith('/auth/v1/')) return send(res, 404, { message: 'not mocked' })
 
-    // ── storage ──
+    // ── storage: public photos (a 1×1 PNG; files named missing-* are 404) ──
+    if (req.method === 'GET' && url.pathname.startsWith('/storage/v1/object/public/')) {
+      await new Promise(r => setTimeout(r, photoDelayMs))
+      if (url.pathname.split('/').pop().startsWith('missing-')) return send(res, 404, { message: 'Object not found' })
+      res.writeHead(200, { 'Content-Type': 'image/png', 'Access-Control-Allow-Origin': '*' })
+      return res.end(PNG_1PX)
+    }
     if (url.pathname.startsWith('/storage/v1/object/')) {
       log.push({ table: 'storage', method: req.method, path: url.pathname })
       return send(res, 200, { Key: url.pathname.replace('/storage/v1/object/', '') })
+    }
+
+    // ── RPC: the role checks from 003_add_auth_roles.sql ──
+    const rpc = url.pathname.match(/^\/rest\/v1\/rpc\/(is_owner|is_admin)$/)
+    if (rpc) {
+      const signedIn = (req.headers.authorization ?? '') === `Bearer ${TOKEN}`
+      const me = signedIn ? db.admins.find(a => a.id === USER.id) : null
+      return send(res, 200, rpc[1] === 'is_owner' ? me?.role === 'owner' : !!me)
     }
 
     // ── PostgREST ──
@@ -155,16 +174,17 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [] 
       body = prefer.includes('return=representation') ? (accept.includes('vnd.pgrst.object') ? inserted[0] : inserted) : undefined
     } else if (req.method === 'PATCH') {
       const patch = JSON.parse(raw.toString() || '{}')
-      const rows = db[table].filter(match)
+      const rows = refused(table, 'PATCH') ? [] : db[table].filter(match)
       rows.forEach(r => Object.assign(r, patch))
       log.push({ table, method: 'PATCH', patch, count: rows.length })
       status = prefer.includes('return=representation') ? 200 : 204
       body = status === 200 ? (accept.includes('vnd.pgrst.object') ? rows[0] : rows) : undefined
     } else if (req.method === 'DELETE') {
-      const before = db[table].length
-      db[table] = db[table].filter(r => !match(r))
-      log.push({ table, method: 'DELETE', count: before - db[table].length })
-      status = 204
+      const gone = refused(table, 'DELETE') ? [] : db[table].filter(match)
+      db[table] = db[table].filter(r => !gone.includes(r))
+      log.push({ table, method: 'DELETE', count: gone.length })
+      status = prefer.includes('return=representation') ? 200 : 204
+      body = status === 200 ? gone : undefined
     }
 
     if (failure?.mode === 'after') return send(res, 500, { message: `injected lost response for ${req.method} on ${table}`, code: 'XX000' })
