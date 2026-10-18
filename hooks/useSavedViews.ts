@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { writeError } from '@/lib/supabase/writes'
 import { sortViews } from '@/lib/views'
 import type { SavedViewRow } from '@/lib/supabase/types'
 
@@ -47,8 +48,9 @@ export function useSavedViews(initialViews: SavedViewRow[]) {
   }, [supabase])
 
   const remove = useCallback(async (id: string): Promise<string | null> => {
-    const { error } = await supabase.from('saved_views').delete().eq('id', id)
-    if (error) return error.message
+    const error = await writeError(supabase, 'saved_views', id,
+      await supabase.from('saved_views').delete().eq('id', id).select('id'))
+    if (error) return error
     setViews(prev => prev.filter(v => v.id !== id))
     return null
   }, [supabase])
@@ -67,10 +69,11 @@ export function useSavedViews(initialViews: SavedViewRow[]) {
       .filter((v, index) => views.find(o => o.id === v.id)!.sort_order !== index)
     setViews(reordered.map((v, index) => ({ ...v, sort_order: index })))
     for (const v of changed) {
-      const { error } = await supabase.from('saved_views').update({ sort_order: v.sort_order }).eq('id', v.id)
+      const error = await writeError(supabase, 'saved_views', v.id,
+        await supabase.from('saved_views').update({ sort_order: v.sort_order }).eq('id', v.id).select('id'))
       if (error) {
         setViews(views) // put the list back as it was
-        return error.message
+        return error
       }
     }
     return null

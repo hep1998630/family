@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useFamilyExport } from '@/components/edit/FamilyExport'
+import { PERMISSION_DENIED } from '@/lib/supabase/writes'
 
 interface EditToolbarProps {
     hasPendingChanges: boolean
@@ -70,10 +71,23 @@ export function SaveErrorBanner({ saveError }: { saveError: string }) {
                 text-right flex flex-col gap-1
             "
         >
-            <p>تعذّر حفظ بعض التغييرات. حاول مرة أخرى — ما تم حفظه لن يتكرر.</p>
-            <p dir="ltr" className="text-sm font-normal text-red-600 text-left break-words">
-                {saveError}
-            </p>
+            {saveError.startsWith(PERMISSION_DENIED) ? (
+                // Retrying won't help: this account isn't allowed to make that change.
+                <>
+                    <p className="font-bold">{PERMISSION_DENIED}.</p>
+                    <p>
+                        ما قبله حُفظ. لإلغاء هذا التغيير أعد تحميل الصفحة،
+                        أو اطلب من مالك الموقع أن يجريه.
+                    </p>
+                </>
+            ) : (
+                <>
+                    <p>تعذّر حفظ بعض التغييرات. حاول مرة أخرى — ما تم حفظه لن يتكرر.</p>
+                    <p dir="ltr" className="text-sm font-normal text-red-600 text-left break-words">
+                        {saveError}
+                    </p>
+                </>
+            )}
         </div>
     )
 }

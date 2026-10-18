@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { requireOwner, writeError } from '@/lib/supabase/writes'
 import type { PersonRow, InsertPerson, UpdatePerson } from '@/lib/supabase/types'
 
 export function usePeople(initialPeople: PersonRow[] = []) {
@@ -60,12 +61,10 @@ export function usePeople(initialPeople: PersonRow[] = []) {
     updates: UpdatePerson
   ): Promise<boolean> => {
     setError(null)
-    const { error } = await supabase
-      .from('people')
-      .update(updates)
-      .eq('id', id)
+    const err = await writeError(supabase, 'people', id,
+      await supabase.from('people').update(updates).eq('id', id).select('id'))
 
-    if (error) { setError(error.message); return false }
+    if (err) { setError(err); return false }
     return true
   }, [])
 
@@ -73,6 +72,15 @@ export function usePeople(initialPeople: PersonRow[] = []) {
   const deletePerson = useCallback(async (id: string): Promise<boolean> => {
     setLoading(true)
     setError(null)
+
+    // 0. Only the owner may delete people — check before touching any link.
+    try {
+      await requireOwner(supabase)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setLoading(false)
+      return false
+    }
 
     // 1. Remove all partnerships involving this person
     const { error: e1 } = await supabase
@@ -90,13 +98,11 @@ export function usePeople(initialPeople: PersonRow[] = []) {
 
     // 3. Delete the person (DB on delete restrict for parent_id is fine —
     //    we only allow this when the person has no children)
-    const { error: e3 } = await supabase
-      .from('people')
-      .delete()
-      .eq('id', id)
+    const e3 = await writeError(supabase, 'people', id,
+      await supabase.from('people').delete().eq('id', id).select('id'))
 
     setLoading(false)
-    if (e3) { setError(e3.message); return false }
+    if (e3) { setError(e3); return false }
     return true
   }, [])
 

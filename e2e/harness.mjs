@@ -8,10 +8,10 @@ import { startMockSupabase, TOKEN, USER } from './mock-supabase.mjs'
  * Starts the fake (with `seed`) and `next dev`, and waits until the app
  * answers. Returns the app URL, the fake's URL and a `stop()`.
  */
-export async function startApp({ seed, missingTables = [], photoDelayMs = 0, mockPort = 54329, appPort = 3109 } = {}) {
+export async function startApp({ seed, missingTables = [], refuse = [], photoDelayMs = 0, mockPort = 54329, appPort = 3109 } = {}) {
   const app = `http://localhost:${appPort}`
   if (await isUp(app)) throw new Error(`port ${appPort} is already in use — is another e2e run still going?`)
-  const mock = await startMockSupabase({ port: mockPort, seed, missingTables, photoDelayMs })
+  const mock = await startMockSupabase({ port: mockPort, seed, missingTables, refuse, photoDelayMs })
   const dev = spawn('npx', ['next', 'dev', '-p', String(appPort)], {
     env: {
       ...process.env,
