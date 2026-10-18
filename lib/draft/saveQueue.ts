@@ -16,6 +16,7 @@
 //    across save attempts), and remaining queued ops are rewritten to the
 //    real ids as soon as each one resolves.
 
+import { checkWritten, requireOwner } from '@/lib/supabase/writes'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, InsertPerson, UpdatePerson } from '@/lib/supabase/types'
 
@@ -172,9 +173,8 @@ export async function runSaveQueue(deps: SaveQueueDeps): Promise<void> {
           .from('avatars').upload(path, file, { upsert: true })
         if (upErr) throw new Error(upErr.message)
         const { data: urlData } = client.storage.from('avatars').getPublicUrl(path)
-        const { error } = await client.from('people')
-          .update({ photo_url: urlData.publicUrl }).eq('id', id)
-        if (error) throw new Error(error.message)
+        await checkWritten(client, 'people', id, await client.from('people')
+          .update({ photo_url: urlData.publicUrl }).eq('id', id).select('id'))
         onPhotoUploaded(id, urlData.publicUrl)
         done()
         break
@@ -205,8 +205,9 @@ export async function runSaveQueue(deps: SaveQueueDeps): Promise<void> {
       }
 
       case 'removePartnership': {
-        const { error } = await client.from('partnerships').delete().eq('id', r(op.id))
-        if (error) throw new Error(error.message)
+        const id = r(op.id)
+        await checkWritten(client, 'partnerships', id,
+          await client.from('partnerships').delete().eq('id', id).select('id'))
         done()
         break
       }
@@ -234,8 +235,11 @@ export async function runSaveQueue(deps: SaveQueueDeps): Promise<void> {
       }
 
       case 'removeParentChild': {
-        const { error } = await client.from('parent_child').delete().eq('id', r(op.id))
-        if (error) throw new Error(error.message)
+        // Must really be gone before the replacement parent is linked (the
+        // next op), or the child ends up with an extra parent.
+        const id = r(op.id)
+        await checkWritten(client, 'parent_child', id,
+          await client.from('parent_child').delete().eq('id', id).select('id'))
         done()
         break
       }
@@ -248,8 +252,8 @@ export async function runSaveQueue(deps: SaveQueueDeps): Promise<void> {
         // A blob: URL is only a local preview — never persist it.
         if (updates.photo_url?.startsWith('blob:')) delete updates.photo_url
         if (Object.keys(updates).length > 0) {
-          const { error } = await client.from('people').update(updates).eq('id', id)
-          if (error) throw new Error(error.message)
+          await checkWritten(client, 'people', id,
+            await client.from('people').update(updates).eq('id', id).select('id'))
         }
         if (hasPhoto) replaceHead({ opId: newUuid(), type: 'uploadPhoto', personId: id })
         else done()
@@ -258,13 +262,16 @@ export async function runSaveQueue(deps: SaveQueueDeps): Promise<void> {
 
       case 'deletePerson': {
         const id = r(op.id)
+        // Only the owner may delete people. Check first, so a refused delete
+        // can't leave the person in place with their links already removed.
+        await requireOwner(client)
         const { error: e1 } = await client.from('partnerships').delete()
           .or(`person_a_id.eq.${id},person_b_id.eq.${id}`)
         if (e1) throw new Error(e1.message)
         const { error: e2 } = await client.from('parent_child').delete().eq('child_id', id)
         if (e2) throw new Error(e2.message)
-        const { error } = await client.from('people').delete().eq('id', id)
-        if (error) throw new Error(error.message)
+        await checkWritten(client, 'people', id,
+          await client.from('people').delete().eq('id', id).select('id'))
         done()
         break
       }

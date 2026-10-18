@@ -8,8 +8,11 @@ export const USER = { id: '00000000-0000-4000-8000-0000000000aa', email: 'owner@
 /**
  * Starts the fake on `port` with `seed` rows; resolves to the http.Server.
  * `missingTables` answer like a table whose migration hasn't been run.
+ * `refuse` lists writes RLS refuses, e.g. [['parent_child', 'DELETE']]: like
+ * the real database they "succeed" while changing 0 rows.
  */
-export function startMockSupabase({ port = 54321, seed = {}, missingTables = [] } = {}) {
+export function startMockSupabase({ port = 54321, seed = {}, missingTables = [], refuse = [] } = {}) {
+  const refused = (table, method) => refuse.some(([t, m]) => t === table && m === method)
   const PORT = port
   const db = {
     roots: seed.roots ?? [],
@@ -103,6 +106,14 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [] 
       return send(res, 200, { Key: url.pathname.replace('/storage/v1/object/', '') })
     }
 
+    // ── RPC: the role checks from 003_add_auth_roles.sql ──
+    const rpc = url.pathname.match(/^\/rest\/v1\/rpc\/(is_owner|is_admin)$/)
+    if (rpc) {
+      const signedIn = (req.headers.authorization ?? '') === `Bearer ${TOKEN}`
+      const me = signedIn ? db.admins.find(a => a.id === USER.id) : null
+      return send(res, 200, rpc[1] === 'is_owner' ? me?.role === 'owner' : !!me)
+    }
+
     // ── PostgREST ──
     const m = url.pathname.match(/^\/rest\/v1\/([a-z_]+)$/)
     if (!m) return send(res, 404, { message: `no route ${url.pathname}` })
@@ -155,16 +166,17 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [] 
       body = prefer.includes('return=representation') ? (accept.includes('vnd.pgrst.object') ? inserted[0] : inserted) : undefined
     } else if (req.method === 'PATCH') {
       const patch = JSON.parse(raw.toString() || '{}')
-      const rows = db[table].filter(match)
+      const rows = refused(table, 'PATCH') ? [] : db[table].filter(match)
       rows.forEach(r => Object.assign(r, patch))
       log.push({ table, method: 'PATCH', patch, count: rows.length })
       status = prefer.includes('return=representation') ? 200 : 204
       body = status === 200 ? (accept.includes('vnd.pgrst.object') ? rows[0] : rows) : undefined
     } else if (req.method === 'DELETE') {
-      const before = db[table].length
-      db[table] = db[table].filter(r => !match(r))
-      log.push({ table, method: 'DELETE', count: before - db[table].length })
-      status = 204
+      const gone = refused(table, 'DELETE') ? [] : db[table].filter(match)
+      db[table] = db[table].filter(r => !gone.includes(r))
+      log.push({ table, method: 'DELETE', count: gone.length })
+      status = prefer.includes('return=representation') ? 200 : 204
+      body = status === 200 ? gone : undefined
     }
 
     if (failure?.mode === 'after') return send(res, 500, { message: `injected lost response for ${req.method} on ${table}`, code: 'XX000' })

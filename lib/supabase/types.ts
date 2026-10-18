@@ -241,7 +241,11 @@ export type Database = {
         Relationships: []
       }
     }
-    Functions: { [_ in never]: never }
+    Functions: {
+      // From 003_add_auth_roles.sql — callable by anyone, answer for the caller.
+      is_admin: { Args: Record<PropertyKey, never>; Returns: boolean }
+      is_owner: { Args: Record<PropertyKey, never>; Returns: boolean }
+    }
     Enums: { [_ in never]: never }
     CompositeTypes: { [_ in never]: never }
   }

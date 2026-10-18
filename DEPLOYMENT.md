@@ -22,8 +22,10 @@ Supabase dashboard → **SQL Editor** → open each file in
 3. `003_add_auth_roles.sql`
 4. `004_grant_data_api_access.sql`
 5. `005_saved_views.sql` — the admins' saved tree views («عروض مختارة»)
+6. `006_editors_can_relink.sql` — lets editors correct a parent or remove
+   a marriage (deleting people stays owner-only)
 
-All five must be run, in order — each depends on the schema the previous
+All six must be run, in order — each depends on the schema the previous
 one created. **004 is not optional**: since 2026-05-30, new Supabase
 projects no longer auto-grant table access to the API, so without it every
 request from the app fails with a permission error that looks exactly
@@ -34,6 +36,13 @@ run yet, in order, *before* publishing the app version that needs them.
 For `005_saved_views.sql` that means before deploying the saved-views
 feature: until it's run, the site still loads but shows no saved views
 (the server log says `could not load — has migration 005 been run?`).
+Without `006_editors_can_relink.sql`, an editor who changes a child's
+father/mother or removes a marriage gets «لم يتم الحفظ: ليس لديك صلاحية
+لهذا التعديل» — nothing is corrupted, but the change can't be saved.
+
+Before giving anyone else access, also do the one-time dashboard settings
+in [SETUP.md](./SETUP.md#one-time-dashboard-settings-do-these-before-giving-anyone-access)
+(turn off public sign-ups; set the Site URL).
 
 `003_add_auth_roles.sql` contains `drop policy if exists ...` statements
 near the top — that's expected and not destructive. It's replacing the

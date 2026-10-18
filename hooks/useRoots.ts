@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { writeError } from '@/lib/supabase/writes'
 import type { RootRow, InsertRoot } from '@/lib/supabase/types'
 
 export function useRoots(initialRoots: RootRow[] = []) {
@@ -58,12 +59,10 @@ export function useRoots(initialRoots: RootRow[] = []) {
     updates: Partial<Pick<RootRow, 'name' | 'canvas_x' | 'canvas_y'>>
   ): Promise<boolean> => {
     setError(null)
-    const { error } = await supabase
-      .from('roots')
-      .update(updates)
-      .eq('id', id)
+    const err = await writeError(supabase, 'roots', id,
+      await supabase.from('roots').update(updates).eq('id', id).select('id'))
 
-    if (error) { setError(error.message); return false }
+    if (err) { setError(err); return false }
     return true
   }, [])
 
@@ -71,13 +70,11 @@ export function useRoots(initialRoots: RootRow[] = []) {
   const deleteRoot = useCallback(async (id: string): Promise<boolean> => {
     setLoading(true)
     setError(null)
-    const { error } = await supabase
-      .from('roots')
-      .delete()
-      .eq('id', id)
+    const err = await writeError(supabase, 'roots', id,
+      await supabase.from('roots').delete().eq('id', id).select('id'))
 
     setLoading(false)
-    if (error) { setError(error.message); return false }
+    if (err) { setError(err); return false }
     return true
   }, [])
 

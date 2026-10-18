@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { writeError } from '@/lib/supabase/writes'
 import type { PartnershipRow, InsertPartnership } from '@/lib/supabase/types'
 
 export function usePartnerships(initialPartnerships: PartnershipRow[] = []) {
@@ -59,13 +60,11 @@ export function usePartnerships(initialPartnerships: PartnershipRow[] = []) {
   const removePartnership = useCallback(async (id: string): Promise<boolean> => {
     setLoading(true)
     setError(null)
-    const { error } = await supabase
-      .from('partnerships')
-      .delete()
-      .eq('id', id)
+    const err = await writeError(supabase, 'partnerships', id,
+      await supabase.from('partnerships').delete().eq('id', id).select('id'))
 
     setLoading(false)
-    if (error) { setError(error.message); return false }
+    if (err) { setError(err); return false }
     return true
   }, [])
 
