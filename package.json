@@ -13,7 +13,9 @@
     "e2e:saved-views": "node e2e/saved-views.mjs",
     "e2e:view-builder": "node e2e/view-builder.mjs",
     "e2e:editor-permissions": "node e2e/editor-permissions.mjs",
-    "e2e:family-export": "node e2e/family-export.mjs"
+    "e2e:family-export": "node e2e/family-export.mjs",
+    "e2e:crop-image": "node e2e/crop-image.mjs",
+    "e2e:photo-crop": "node e2e/photo-crop.mjs"
   },
   "dependencies": {
     "@netlify/plugin-nextjs": "^5.15.9",
@@ -23,7 +25,8 @@
     "jszip": "3.10.2",
     "next": "^15.0.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-easy-crop": "6.2.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
