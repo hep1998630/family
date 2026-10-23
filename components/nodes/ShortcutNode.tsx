@@ -39,15 +39,15 @@ export default function ShortcutNode({
 
       {/* ── Text ── */}
       <div className="w-full flex flex-col items-center gap-0.5">
-        <p className="font-sans text-sm font-bold text-charcoal leading-snug line-clamp-2 w-full">
+        <p className="name-text node-text font-sans font-bold text-charcoal leading-snug line-clamp-2 w-full">
           {person.name}
         </p>
         {person.nickname && (
-          <p className="font-sans text-xs text-walnut-light truncate w-full">
+          <p className="node-text-small font-sans text-walnut-light truncate w-full">
             {person.nickname}
           </p>
         )}
-        <p className="font-sans text-xs font-bold text-teal-700 flex items-center gap-1 mt-0.5">
+        <p className="node-text-small font-sans font-bold text-teal-700 flex items-center gap-1 mt-0.5">
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
             <path d="M1 5h8M6 2l3 3-3 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>

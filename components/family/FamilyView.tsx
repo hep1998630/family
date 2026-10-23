@@ -98,7 +98,7 @@ export default function FamilyView({
     <div className="family-view h-full overflow-y-auto overflow-x-hidden" data-testid="family-view">
       <div className="mx-auto w-full max-w-3xl px-4 pt-4 pb-24 flex flex-col gap-6">
         {/* ── Navigation ── */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <NavButton onClick={onBack} disabled={!canGoBack} label="رجوع">
             <path d="M7 4l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </NavButton>
@@ -112,7 +112,7 @@ export default function FamilyView({
         {/* ── Parents ── */}
         {parents.length > 0 && (
           <Section title="الوالدان">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="card-grid gap-3">
               {parents.map(p => (
                 <RelativeCard key={p.id} person={p} label={lineage.label(p)} onClick={() => onFocus(p.id)}
                   role={p.gender === 'female' ? 'الأم' : p.gender === 'male' ? 'الأب' : 'الوالد'} />
@@ -133,7 +133,7 @@ export default function FamilyView({
           >
             <Avatar name={person.name} photoUrl={person.photo_url} size={104} />
             <div className="w-full min-w-0">
-              <h2 className="font-sans text-2xl font-bold text-charcoal leading-snug break-words">
+              <h2 className="font-sans text-2xl font-bold text-charcoal leading-snug name-text">
                 {lineage.label(person)}
               </h2>
               {person.nickname && <p className="font-sans text-lg text-walnut-light mt-1">{person.nickname}</p>}
@@ -157,7 +157,7 @@ export default function FamilyView({
               <h3 className="font-sans text-lg font-bold text-walnut-light px-1">
                 {person.gender === 'female' ? (partners.length > 1 ? 'الأزواج' : 'الزوج') : (partners.length > 1 ? 'الزوجات' : 'الزوجة')}
               </h3>
-              <div className="grid grid-cols-2 md:grid-cols-1 gap-3">
+              <div className="card-grid gap-3">
                 {partners.map(p => (
                   <RelativeCard key={p.id} person={p} label={lineage.label(p)} onClick={() => onFocus(p.id)} />
                 ))}
@@ -172,7 +172,7 @@ export default function FamilyView({
           {children.length === 0 ? (
             <p className="font-sans text-lg text-walnut-light text-center py-4">لا يوجد أبناء مسجلون.</p>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            <div className="card-grid gap-3">
               {children.map(c => (
                 <RelativeCard key={c.id} person={c} label={c.name} note={otherParentName(c)} onClick={() => onFocus(c.id)} />
               ))}
@@ -208,17 +208,19 @@ function RelativeCard({ person, label, role, note, onClick }: {
     <button
       onClick={onClick}
       className={`
-        min-w-0 min-h-[64px] flex items-center gap-3 p-3 text-right
+        relative-card min-w-0 min-h-[64px] p-3
         bg-white rounded-2xl border-2 border-r-[6px] shadow-card
         active:scale-[0.98] hover:border-walnut transition-all duration-150
         ${person.gender === 'female' ? 'border-pink-100 border-r-pink-500' : person.gender === 'male' ? 'border-blue-100 border-r-blue-500' : 'border-slate-200 border-r-slate-400'}
       `}
     >
-      <Avatar name={person.name} photoUrl={person.photo_url} size={44} />
-      <span className="flex-1 min-w-0">
-        {role && <span className="block font-sans text-sm text-walnut-light leading-tight">{role}</span>}
-        <span className="block font-sans text-lg font-semibold text-charcoal leading-snug break-words">{label}</span>
-        {note && <span className="block font-sans text-sm text-walnut-light leading-tight truncate">من {note}</span>}
+      <span className="relative-card-body">
+        <Avatar name={person.name} photoUrl={person.photo_url} size={44} />
+        <span className="flex-1 min-w-0 w-full">
+          {role && <span className="block font-sans text-sm text-walnut-light leading-tight">{role}</span>}
+          <span className="name-text block font-sans font-semibold text-charcoal leading-snug">{label}</span>
+          {note && <span className="block font-sans text-sm text-walnut-light leading-tight truncate">من {note}</span>}
+        </span>
       </span>
     </button>
   )

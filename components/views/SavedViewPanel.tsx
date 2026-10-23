@@ -75,10 +75,10 @@ export default function SavedViewPanel({
               <path d="M6.5 3L12 8l-5.5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
-          <h2 className="flex-1 min-w-0 font-sans text-xl sm:text-2xl font-bold text-charcoal leading-snug break-words">{view.name}</h2>
+          <h2 className="flex-1 min-w-0 font-sans text-xl sm:text-2xl font-bold text-charcoal leading-snug name-text">{view.name}</h2>
         </div>
         <div className="flex items-center gap-3 ps-14">
-          <p className="flex-1 min-w-0 font-sans text-base text-walnut-light leading-snug break-words">{subtitle}</p>
+          <p className="flex-1 min-w-0 font-sans text-base text-walnut-light leading-snug name-text">{subtitle}</p>
           {onEdit && (
             <button
               onClick={onEdit}
