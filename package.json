@@ -13,7 +13,8 @@
     "e2e:saved-views": "node e2e/saved-views.mjs",
     "e2e:view-builder": "node e2e/view-builder.mjs",
     "e2e:editor-permissions": "node e2e/editor-permissions.mjs",
-    "e2e:family-export": "node e2e/family-export.mjs"
+    "e2e:family-export": "node e2e/family-export.mjs",
+    "e2e:name-wrapping": "node e2e/name-wrapping.mjs"
   },
   "dependencies": {
     "@netlify/plugin-nextjs": "^5.15.9",

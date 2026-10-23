@@ -144,7 +144,7 @@ function AccountMenu({ adminName, hasPendingChanges }: { adminName: string; hasP
             {open && (
                 <div className="absolute top-full mt-2 left-0 z-40 w-60 bg-white border-2 border-slate-200 rounded-2xl shadow-popup p-4 flex flex-col gap-3">
                     <p className="font-sans text-sm text-walnut-light">
-                        مسجل الدخول: <span className="font-semibold text-charcoal break-words">{adminName}</span>
+                        مسجل الدخول: <span className="font-semibold text-charcoal name-text">{adminName}</span>
                     </p>
                     {familyExport.button}
                     <button

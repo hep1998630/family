@@ -38,9 +38,63 @@
     background-color: var(--color-bg);
     color: var(--color-text);
     font-family: var(--font-cairo);
-    font-size: 18px;
+    /* Relative, so a larger text-size setting on the phone or browser makes
+       the whole app larger (18px at the default 16px). */
+    font-size: 112.5%;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* ── Names ────────────────────────────────────────────────── */
+@layer components {
+  /* A name wraps only between words, never inside one: splitting an
+     Arabic word also breaks its letter joining («الطي / ب»). */
+  .name-text {
+    overflow-wrap: normal;
+    word-break: normal;
+    hyphens: none;
+  }
+
+  /* Card grids sized in `rem`, so larger text means fewer, wider columns
+     (down to one) instead of squeezing the names. */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 8.5rem), 1fr));
+  }
+
+  /* A relative's card: avatar beside the name when there's room, above it
+     (centered) when the card is narrow, so the name gets the full width. */
+  .relative-card {
+    container-type: inline-size;
+  }
+  .relative-card-body {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    text-align: right;
+  }
+  @container (max-width: 14rem) {
+    .relative-card-body {
+      flex-direction: column;
+      text-align: center;
+      gap: 0.5rem;
+    }
+  }
+  /* Tree cards have a fixed size (NODE_WIDTH × NODE_HEIGHT) and the tree
+     zooms on its own, so their text follows a larger setting only up to a
+     cap — enough to keep long names inside the card. */
+  .node-text {
+    font-size: min(0.875rem, 17px);
+  }
+  .node-text-small {
+    font-size: min(0.75rem, 14px);
+  }
+
+  /* Last resort for one very long word in a narrow card: shrink the name a
+     little rather than split it. */
+  .relative-card .name-text {
+    font-size: clamp(0.95rem, 13cqi, 1.125rem);
   }
 }
 
