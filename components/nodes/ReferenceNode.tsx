@@ -73,15 +73,15 @@ export default function ReferenceNode({
 
       {/* ── Text ── */}
       <div className="w-full flex flex-col items-center gap-0.5">
-        <p className="font-sans text-sm font-bold text-charcoal leading-snug line-clamp-2 w-full">
+        <p className="name-text node-text font-sans font-bold text-charcoal leading-snug line-clamp-2 w-full">
           {person.name}
         </p>
         {person.nickname && (
-          <p className="font-sans text-xs text-walnut-light truncate w-full">
+          <p className="node-text-small font-sans text-walnut-light truncate w-full">
             {person.nickname}
           </p>
         )}
-        <p className="font-sans text-xs font-bold text-amber-700 flex items-center gap-1 mt-0.5">
+        <p className="node-text-small font-sans font-bold text-amber-700 flex items-center gap-1 mt-0.5">
           <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
             <path
               d="M4.5 6.5a2.5 2.5 0 003.5 0l1.5-1.5a2.5 2.5 0 00-3.5-3.5L5.25 2.75"

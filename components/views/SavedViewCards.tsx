@@ -39,10 +39,10 @@ export default function SavedViewCards({ views, personFor, onSelect, title = 'ع
             <>
               <Avatar name={top?.name ?? view.name} photoUrl={top?.photo_url} size={56} />
               <span className="flex-1 min-w-0">
-                <span className="block font-sans text-xl font-bold text-charcoal leading-snug break-words">
+                <span className="block font-sans text-xl font-bold text-charcoal leading-snug name-text">
                   {view.name}
                 </span>
-                <span className="block font-sans text-base text-walnut-light leading-snug mt-0.5 break-words">
+                <span className="block font-sans text-base text-walnut-light leading-snug mt-0.5 name-text">
                   {subtitle}
                 </span>
               </span>

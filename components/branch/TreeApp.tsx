@@ -805,7 +805,7 @@ function ViewToggle({ value, onChange, showViews }: {
     ...(showViews ? [{ mode: 'views' as const, label: 'العروض' }] : []),
   ]
   return (
-    <div role="group" aria-label="طريقة العرض" className="flex-shrink-0 flex p-1 gap-1 bg-parchment border-2 border-slate-200 rounded-xl">
+    <div role="group" aria-label="طريقة العرض" className="max-w-full flex flex-wrap p-1 gap-1 bg-parchment border-2 border-slate-200 rounded-xl">
       {options.map(o => (
         <button
           key={o.mode}

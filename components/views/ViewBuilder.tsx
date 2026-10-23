@@ -146,7 +146,7 @@ export default function ViewBuilder({
               <div className="flex items-center gap-3 p-3 rounded-xl border-2 border-walnut/30 bg-parchment">
                 <Avatar name={top.name} photoUrl={top.photo_url} size={44} />
                 <span className="flex-1 min-w-0">
-                  <span className="block font-sans text-lg font-bold text-charcoal break-words" data-testid="vb-top">{lineage.label(top)}</span>
+                  <span className="block font-sans text-lg font-bold text-charcoal name-text" data-testid="vb-top">{lineage.label(top)}</span>
                   <span className="block font-sans text-sm text-walnut-light">{rootNamesById.get(top.root_id)}</span>
                 </span>
                 <button onClick={() => setPicking(true)} className="flex-shrink-0 h-11 px-4 rounded-xl border-2 border-walnut/30 font-sans text-base font-bold text-walnut hover:border-walnut">
@@ -178,7 +178,7 @@ export default function ViewBuilder({
                         >
                           <Avatar name={p.name} photoUrl={p.photo_url} size={38} />
                           <span className="flex-1 min-w-0">
-                            <span className="block font-sans text-base font-semibold text-charcoal break-words">{lineage.label(p)}</span>
+                            <span className="block font-sans text-base font-semibold text-charcoal name-text">{lineage.label(p)}</span>
                             <span className="block font-sans text-sm text-walnut-light">{rootNamesById.get(p.root_id)}</span>
                           </span>
                         </button>
