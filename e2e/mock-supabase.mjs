@@ -30,6 +30,8 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [],
     parent_child: [['id'], ['parent_id', 'child_id']],
     saved_views: [['id']],
   }
+  // storage: "bucket/path" → { body, type }
+  const files = new Map(Object.entries(seed.files ?? {}))
   const failures = [] // { table, method, mode: 'before'|'after' }
   const log = []      // every write, for assertions
 
@@ -91,7 +93,7 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [],
     const raw = await readBody(req)
 
     // ── control endpoints for the test driver ──
-    if (url.pathname === '/__mock/state') return send(res, 200, { db, log })
+    if (url.pathname === '/__mock/state') return send(res, 200, { db, log, files: [...files.keys()] })
     if (url.pathname === '/__mock/fail') { failures.push(JSON.parse(raw.toString())); return send(res, 200, { ok: true }) }
 
     // ── auth ──
@@ -102,16 +104,41 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [],
     if (url.pathname === '/auth/v1/logout') return send(res, 204)
     if (url.pathname.startsWith('/auth/v1/')) return send(res, 404, { message: 'not mocked' })
 
-    // ── storage: public photos (a 1×1 PNG; files named missing-* are 404) ──
+    // ── storage: public photos. An uploaded file is served as uploaded; any
+    //    other name gets a 1×1 PNG, except names starting missing- (404). ──
     if (req.method === 'GET' && url.pathname.startsWith('/storage/v1/object/public/')) {
       await new Promise(r => setTimeout(r, photoDelayMs))
+      const stored = files.get(decodeURIComponent(url.pathname.replace('/storage/v1/object/public/', '')))
+      if (stored) {
+        res.writeHead(200, { 'Content-Type': stored.type, 'Access-Control-Allow-Origin': '*' })
+        return res.end(stored.body)
+      }
       if (url.pathname.split('/').pop().startsWith('missing-')) return send(res, 404, { message: 'Object not found' })
       res.writeHead(200, { 'Content-Type': 'image/png', 'Access-Control-Allow-Origin': '*' })
       return res.end(PNG_1PX)
     }
-    if (url.pathname.startsWith('/storage/v1/object/')) {
-      log.push({ table: 'storage', method: req.method, path: url.pathname })
-      return send(res, 200, { Key: url.pathname.replace('/storage/v1/object/', '') })
+    // Upload (supabase-js sends a File as multipart form data).
+    if ((req.method === 'POST' || req.method === 'PUT') && url.pathname.startsWith('/storage/v1/object/')) {
+      const key = decodeURIComponent(url.pathname.replace('/storage/v1/object/', ''))
+      log.push({ table: 'storage', method: req.method, path: key })
+      const type = req.headers['content-type'] ?? ''
+      let body = raw, fileType = type
+      if (type.startsWith('multipart/form-data')) {
+        const form = await new Response(raw, { headers: { 'content-type': type } }).formData()
+        const file = [...form.values()].find(v => typeof v !== 'string')
+        body = Buffer.from(await file.arrayBuffer())
+        fileType = file.type || 'application/octet-stream'
+      }
+      files.set(key, { body, type: fileType })
+      return send(res, 200, { Key: key })
+    }
+    // Remove: DELETE /storage/v1/object/<bucket> with { prefixes: [paths] }.
+    if (req.method === 'DELETE' && url.pathname.startsWith('/storage/v1/object/')) {
+      const bucket = url.pathname.replace('/storage/v1/object/', '')
+      const { prefixes = [] } = JSON.parse(raw.toString() || '{}')
+      log.push({ table: 'storage', method: 'DELETE', paths: prefixes })
+      const gone = prefixes.filter(p => files.delete(`${bucket}/${p}`))
+      return send(res, 200, gone.map(name => ({ name, bucket_id: bucket })))
     }
 
     // ── RPC: the role checks from 003_add_auth_roles.sql ──

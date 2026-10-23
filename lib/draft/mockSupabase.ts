@@ -24,6 +24,9 @@ const UNIQUE_KEYS: Record<string, string[][]> = {
   parent_child: [['id'], ['parent_id', 'child_id']],
 }
 
+/** What getPublicUrl returns, shaped like a real Supabase photo URL. */
+export const PUBLIC_URL = 'https://cdn.example/storage/v1/object/public/avatars/'
+
 export function createMockDb() {
   const tables: Record<string, Row[]> = { roots: [], people: [], partnerships: [], parent_child: [] }
   const failures: { table: string; op: string; mode: FailureMode }[] = []
@@ -31,6 +34,7 @@ export function createMockDb() {
   const refused = new Set<string>()
   let isOwner = true
   const uploads: string[] = []
+  const removed: string[] = []
   let storageFailures = 0
 
   const takeFailure = (table: string, op: string) => {
@@ -127,7 +131,11 @@ export function createMockDb() {
           uploads.push(path)
           return { error: null }
         },
-        getPublicUrl: (path: string) => ({ data: { publicUrl: `https://cdn.example/${path}` } }),
+        remove: async (paths: string[]) => {
+          removed.push(...paths)
+          return { data: paths.map(name => ({ name })), error: null }
+        },
+        getPublicUrl: (path: string) => ({ data: { publicUrl: `${PUBLIC_URL}${path}` } }),
       }),
     },
   } as unknown as SupabaseClient<Database>
@@ -136,6 +144,7 @@ export function createMockDb() {
     client,
     tables,
     uploads,
+    removed,
     failNext: (table: string, op: string, mode: FailureMode = 'before') => failures.push({ table, op, mode }),
     failNextUpload: () => { storageFailures += 1 },
     /** Make `op` on `table` silently affect 0 rows, as RLS does for a refused write. */

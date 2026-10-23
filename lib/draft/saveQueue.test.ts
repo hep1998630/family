@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { runSaveQueue, newUuid, type NewPendingOp, type PendingOp } from './saveQueue'
-import { createMockDb } from './mockSupabase'
+import { createMockDb, PUBLIC_URL } from './mockSupabase'
 import type { InsertPerson } from '@/lib/supabase/types'
 
 function person(name: string, root_id: string, extra: Partial<InsertPerson> = {}): InsertPerson {
@@ -138,8 +138,9 @@ describe('runSaveQueue', () => {
 
     await d.save()
     expect(db.tables.people).toHaveLength(1)
-    expect(db.tables.people[0].photo_url).toBe(`https://cdn.example/${realId}.jpg`)
-    expect(db.uploads).toEqual([`${realId}.jpg`])
+    expect(db.uploads).toHaveLength(1)
+    expect(db.uploads[0]).toMatch(new RegExp(`^${realId}-[0-9a-f]{12}\\.jpg$`))
+    expect(db.tables.people[0].photo_url).toBe(`${PUBLIC_URL}${db.uploads[0]}`)
   })
 
   it('replacing a parent link removes the old row and adds the new one, safely on retry', async () => {

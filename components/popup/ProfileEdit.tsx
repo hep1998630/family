@@ -1,12 +1,16 @@
 'use client'
 
 import { useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import Avatar from '@/components/ui/Avatar'
 import Button from '@/components/ui/Button'
 import { Input, Textarea } from '@/components/ui/Input'
 import type { PersonRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
 import { partnersOf, type Lineage } from '@/lib/tree/lineage'
+
+// The crop step (and its library) loads only once a photo is picked.
+const PhotoCropper = dynamic(() => import('./PhotoCropper'), { ssr: false })
 
 interface ProfileEditProps {
   person: PersonRow
@@ -43,6 +47,8 @@ export default function ProfileEdit({
   }))
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(person.photo_url ?? null)
+  /** The photo just picked, waiting in the crop step. */
+  const [cropSrc, setCropSrc] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState<Partial<Record<keyof PersonFormValues, string>>>({})
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -60,7 +66,19 @@ export default function ProfileEdit({
 
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
+    e.target.value = '' // so picking the same photo again still opens the crop step
     if (!file) return
+    setCropSrc(URL.createObjectURL(file))
+  }
+
+  const closeCrop = () => {
+    if (cropSrc) URL.revokeObjectURL(cropSrc)
+    setCropSrc(null)
+  }
+
+  const handleCropped = (file: File) => {
+    closeCrop()
+    if (photoFile && photoPreview) URL.revokeObjectURL(photoPreview)
     setPhotoFile(file)
     setPhotoPreview(URL.createObjectURL(file))
   }
@@ -117,10 +135,12 @@ export default function ProfileEdit({
         onClick={() => fileInputRef.current?.click()}
       >
         {photoPreview ? (
+          // Round, like every avatar: what you see here is what the tree shows.
           <img
             src={photoPreview}
-            alt="Preview"
-            className="w-full h-full object-cover"
+            alt="الصورة"
+            className="w-36 h-36 rounded-full object-cover border-4 border-white shadow-card"
+            data-testid="profile-photo-preview"
           />
         ) : (
           <Avatar name={values.name || person.name} size={80} />
@@ -147,10 +167,13 @@ export default function ProfileEdit({
           accept="image/*"
           className="hidden"
           onChange={handlePhotoChange}
+          data-testid="photo-input"
         />
 
         <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-white to-transparent" />
       </div>
+
+      {cropSrc && <PhotoCropper src={cropSrc} onDone={handleCropped} onCancel={closeCrop} />}
 
       {/* ── Form ── */}
       <div className="px-6 pb-7 pt-2 flex flex-col gap-4">
