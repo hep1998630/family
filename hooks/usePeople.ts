@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { requireOwner, writeError } from '@/lib/supabase/writes'
+import { AVATAR_BUCKET, avatarPath } from '@/lib/photos/avatarPath'
 import type { PersonRow, InsertPerson, UpdatePerson } from '@/lib/supabase/types'
 
 export function usePeople(initialPeople: PersonRow[] = []) {
@@ -111,16 +112,15 @@ export function usePeople(initialPeople: PersonRow[] = []) {
     personId: string,
     file: File
   ): Promise<string | null> => {
-    const ext = file.name.split('.').pop()
-    const path = `${personId}.${ext}`
+    const path = avatarPath(personId, Date.now().toString(36), file)
 
     const { error: uploadError } = await supabase.storage
-      .from('avatars')
-      .upload(path, file, { upsert: true })
+      .from(AVATAR_BUCKET)
+      .upload(path, file, { upsert: true, contentType: file.type || undefined, cacheControl: '31536000' })
 
     if (uploadError) { setError(uploadError.message); return null }
 
-    const { data } = supabase.storage.from('avatars').getPublicUrl(path)
+    const { data } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path)
     return data.publicUrl
   }, [])
 

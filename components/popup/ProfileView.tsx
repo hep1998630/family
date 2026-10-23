@@ -41,7 +41,7 @@ export default function ProfileView({
 
         {/* Name block */}
         <div>
-          <h2 className="font-sans text-2xl font-bold text-charcoal leading-tight">
+          <h2 className="name-text font-sans text-2xl font-bold text-charcoal leading-tight">
             {person.name}
           </h2>
           {person.nickname && (

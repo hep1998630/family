@@ -17,13 +17,16 @@
 //    real ids as soon as each one resolves.
 
 import { checkWritten, requireOwner } from '@/lib/supabase/writes'
+import { AVATAR_BUCKET, avatarPath, avatarPathFromUrl } from '@/lib/photos/avatarPath'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, InsertPerson, UpdatePerson } from '@/lib/supabase/types'
 
 export type PendingOp = { opId: string } & (
   | { type: 'addRoot'; tempId: string; realId: string; name: string }
   | { type: 'addPerson'; tempId: string; realId: string; data: InsertPerson }
-  | { type: 'uploadPhoto'; personId: string }
+  // previousUrl: the photo being replaced, noted before the upload starts
+  // (undefined until then) so its file can be removed once the new one is saved.
+  | { type: 'uploadPhoto'; personId: string; previousUrl?: string | null }
   | { type: 'addPartnership'; tempId: string; realId: string; personAId: string; personBId: string }
   | { type: 'removePartnership'; id: string }
   | { type: 'addParentChild'; tempId: string; realId: string; parentId: string; childId: string }
@@ -167,15 +170,31 @@ export async function runSaveQueue(deps: SaveQueueDeps): Promise<void> {
         const file = getPhoto(op.personId)
         if (!file) { done(); break }
         const id = r(op.personId)
-        const ext = file.name.split('.').pop()
-        const path = `${id}.${ext}`
+        // Note the photo being replaced first, and only once: on a retry the
+        // database may already hold the new one.
+        let previousUrl = op.previousUrl
+        if (previousUrl === undefined) {
+          const { data, error } = await client.from('people').select('photo_url').eq('id', id).limit(1)
+          if (error) throw new Error(error.message)
+          previousUrl = (data?.[0] as { photo_url: string | null } | undefined)?.photo_url ?? null
+          replaceHead({ ...op, previousUrl })
+        }
+        // A new name per upload (so no stale copy is shown), stable across retries.
+        const path = avatarPath(id, op.opId, file)
         const { error: upErr } = await client.storage
-          .from('avatars').upload(path, file, { upsert: true })
+          .from(AVATAR_BUCKET).upload(path, file, { upsert: true, contentType: file.type || undefined, cacheControl: '31536000' })
         if (upErr) throw new Error(upErr.message)
-        const { data: urlData } = client.storage.from('avatars').getPublicUrl(path)
+        const { data: urlData } = client.storage.from(AVATAR_BUCKET).getPublicUrl(path)
         await checkWritten(client, 'people', id, await client.from('people')
           .update({ photo_url: urlData.publicUrl }).eq('id', id).select('id'))
         onPhotoUploaded(id, urlData.publicUrl)
+        // The old file is no longer used. Removing it is housekeeping: if it
+        // fails, the new photo is saved all the same.
+        const oldPath = avatarPathFromUrl(previousUrl)
+        if (oldPath && oldPath !== path) {
+          const { error: rmErr } = await client.storage.from(AVATAR_BUCKET).remove([oldPath])
+          if (rmErr) console.warn(`could not remove the old photo ${oldPath}: ${rmErr.message}`)
+        }
         done()
         break
       }
