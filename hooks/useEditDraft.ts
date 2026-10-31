@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { newUuid, runSaveQueue, type NewPendingOp, type PendingOp } from '@/lib/draft/saveQueue'
 import { deletePersonOps, removeLinkOps } from '@/lib/draft/draftOps'
+import { settleUploadedPhoto, type PendingPhoto } from '@/lib/draft/pendingPhotos'
 import type {
   PersonRow, RootRow, PartnershipRow, ParentChildRow,
   InsertPerson, UpdatePerson,
@@ -39,7 +40,7 @@ export function useEditDraft(
   const [opCount, setOpCount] = useState(0)
   const idMapRef = useRef<Map<string, string>>(new Map())
   const savingRef = useRef(false)
-  const pendingPhotos = useRef<Map<string, { file: File; blobUrl: string }>>(new Map())
+  const pendingPhotos = useRef<Map<string, PendingPhoto>>(new Map())
 
   const supabase = createClient()
 
@@ -297,9 +298,8 @@ export function useEditDraft(
         getPhoto: id => pendingPhotos.current.get(id)?.file,
         onQueueChange: () => setOpCount(opsRef.current.length),
         onResolved: applyIdMapping,
-        onPhotoUploaded: (personId, url) => {
-          const entry = pendingPhotos.current.get(personId)
-          if (entry) { URL.revokeObjectURL(entry.blobUrl); pendingPhotos.current.delete(personId) }
+        onPhotoUploaded: (personId, url, file) => {
+          if (!settleUploadedPhoto(pendingPhotos.current, personId, file)) return
           setPeople(prev => prev.map(p => (p.id === personId ? { ...p, photo_url: url } : p)))
         },
       })

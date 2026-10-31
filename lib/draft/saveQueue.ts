@@ -17,16 +17,14 @@
 //    real ids as soon as each one resolves.
 
 import { checkWritten, requireOwner } from '@/lib/supabase/writes'
-import { AVATAR_BUCKET, avatarPath, avatarPathFromUrl } from '@/lib/photos/avatarPath'
+import { uploadAvatar } from '@/lib/photos/avatars'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, InsertPerson, ParentChildRow, PartnershipRow, PersonRow, UpdatePerson } from '@/lib/supabase/types'
 
 export type PendingOp = { opId: string } & (
   | { type: 'addRoot'; tempId: string; realId: string; name: string }
   | { type: 'addPerson'; tempId: string; realId: string; data: InsertPerson; maybeWritten?: boolean }
-  // previousUrl: the photo being replaced, noted before the upload starts
-  // (undefined until then) so its file can be removed once the new one is saved.
-  | { type: 'uploadPhoto'; personId: string; previousUrl?: string | null }
+  | { type: 'uploadPhoto'; personId: string }
   | { type: 'addPartnership'; tempId: string; realId: string; personAId: string; personBId: string; maybeWritten?: boolean }
   | { type: 'removePartnership'; id: string }
   | { type: 'addParentChild'; tempId: string; realId: string; parentId: string; childId: string; maybeWritten?: boolean }
@@ -118,7 +116,8 @@ export interface SaveQueueDeps {
   onQueueChange: () => void
   /** A temp id now has a real row in the database — rewrite local state. */
   onResolved: (tempId: string, realId: string) => void
-  onPhotoUploaded: (personId: string, publicUrl: string) => void
+  /** `file` is the photo that was uploaded — a newer pick may already be waiting. */
+  onPhotoUploaded: (personId: string, publicUrl: string, file: File) => void
 }
 
 const isDuplicate = (error: { code?: string } | null) => error?.code === '23505'
@@ -198,31 +197,10 @@ export async function runSaveQueue(deps: SaveQueueDeps): Promise<void> {
         const file = getPhoto(op.personId)
         if (!file) { done(); break }
         const id = r(op.personId)
-        // Note the photo being replaced first, and only once: on a retry the
-        // database may already hold the new one.
-        let previousUrl = op.previousUrl
-        if (previousUrl === undefined) {
-          const { data, error } = await client.from('people').select('photo_url').eq('id', id).limit(1)
-          if (error) throw new Error(error.message)
-          previousUrl = (data?.[0] as { photo_url: string | null } | undefined)?.photo_url ?? null
-          replaceHead({ ...op, previousUrl })
-        }
-        // A new name per upload (so no stale copy is shown), stable across retries.
-        const path = avatarPath(id, op.opId, file)
-        const { error: upErr } = await client.storage
-          .from(AVATAR_BUCKET).upload(path, file, { upsert: true, contentType: file.type || undefined, cacheControl: '31536000' })
-        if (upErr) throw new Error(upErr.message)
-        const { data: urlData } = client.storage.from(AVATAR_BUCKET).getPublicUrl(path)
+        const url = await uploadAvatar(client, id, file)
         await checkWritten(client, 'people', id, await client.from('people')
-          .update({ photo_url: urlData.publicUrl }).eq('id', id).select('id'))
-        onPhotoUploaded(id, urlData.publicUrl)
-        // The old file is no longer used. Removing it is housekeeping: if it
-        // fails, the new photo is saved all the same.
-        const oldPath = avatarPathFromUrl(previousUrl)
-        if (oldPath && oldPath !== path) {
-          const { error: rmErr } = await client.storage.from(AVATAR_BUCKET).remove([oldPath])
-          if (rmErr) console.warn(`could not remove the old photo ${oldPath}: ${rmErr.message}`)
-        }
+          .update({ photo_url: url }).eq('id', id).select('id'))
+        onPhotoUploaded(id, url, file)
         done()
         break
       }

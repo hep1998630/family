@@ -106,18 +106,15 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [],
     if (url.pathname === '/auth/v1/logout') return send(res, 204)
     if (url.pathname.startsWith('/auth/v1/')) return send(res, 404, { message: 'not mocked' })
 
-    // ── storage: public photos. An uploaded file is served as uploaded; any
-    //    other name gets a 1×1 PNG, except names starting missing- (404). ──
+    // ── storage: public photos. Only files that were seeded (seed.files) or
+    //    uploaded — and not deleted since — exist; anything else is a 404,
+    //    like the real bucket. (Query strings such as ?cacheNonce= are ignored.) ──
     if (req.method === 'GET' && url.pathname.startsWith('/storage/v1/object/public/')) {
       await new Promise(r => setTimeout(r, photoDelayMs))
       const stored = files.get(decodeURIComponent(url.pathname.replace('/storage/v1/object/public/', '')))
-      if (stored) {
-        res.writeHead(200, { 'Content-Type': stored.type, 'Access-Control-Allow-Origin': '*' })
-        return res.end(stored.body)
-      }
-      if (url.pathname.split('/').pop().startsWith('missing-')) return send(res, 404, { message: 'Object not found' })
-      res.writeHead(200, { 'Content-Type': 'image/png', 'Access-Control-Allow-Origin': '*' })
-      return res.end(PNG_1PX)
+      if (!stored) return send(res, 404, { message: 'Object not found' })
+      res.writeHead(200, { 'Content-Type': stored.type, 'Access-Control-Allow-Origin': '*' })
+      return res.end(stored.body)
     }
     // Upload (supabase-js sends a File as multipart form data).
     if ((req.method === 'POST' || req.method === 'PUT') && url.pathname.startsWith('/storage/v1/object/')) {
