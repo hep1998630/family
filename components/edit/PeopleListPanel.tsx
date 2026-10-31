@@ -27,10 +27,17 @@ export default function PeopleListPanel({
   const [search, setSearch] = useState('')
   const [confirmId, setConfirmId] = useState<string | null>(null)
 
-  const parentIds = useMemo(
-    () => new Set(parentChildRows.map(pc => pc.parent_id)),
-    [parentChildRows]
-  )
+  // Everyone with children — by a parent link, or (older rows) only by a
+  // child's mother_id; children of their shortcut rows in other branches
+  // count too. They can't be deleted (the database refuses it as well).
+  const parentIds = useMemo(() => {
+    const byId = new Map(people.map(p => [p.id, p]))
+    const ids = [
+      ...parentChildRows.map(pc => pc.parent_id),
+      ...people.flatMap(p => (p.mother_id ? [p.mother_id] : [])),
+    ]
+    return new Set(ids.map(id => byId.get(id)?.original_person_id ?? id))
+  }, [parentChildRows, people])
 
   const realPeople = useMemo(
     () => people.filter(p => !p.is_shortcut),

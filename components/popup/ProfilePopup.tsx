@@ -61,7 +61,11 @@ export default function ProfilePopup({
       .filter(pc => pc.parent_id === person.id)
       .map(pc => pc.child_id)
 
-    const hasConnections = childIds.length > 0
+    // Children: by a parent link, or (older rows) only by their mother_id —
+    // here or through a shortcut row of this person in another branch.
+    const selves = new Set([person.id, ...people.filter(p => p.original_person_id === person.id).map(p => p.id)])
+    const hasConnections = parentChildRows.some(pc => selves.has(pc.parent_id))
+      || people.some(p => !!p.mother_id && selves.has(p.mother_id) && !selves.has(p.id))
 
     const parentNames   = parentIds.map(id => peopleById.get(id)?.name ?? 'Unknown')
     const childrenNames = childIds.map(id => peopleById.get(id)?.name ?? 'Unknown')

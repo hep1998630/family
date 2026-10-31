@@ -19,19 +19,35 @@
 import { checkWritten, requireOwner } from '@/lib/supabase/writes'
 import { uploadAvatar } from '@/lib/photos/avatars'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database, InsertPerson, UpdatePerson } from '@/lib/supabase/types'
+import type { Database, InsertPerson, ParentChildRow, PartnershipRow, PersonRow, UpdatePerson } from '@/lib/supabase/types'
 
 export type PendingOp = { opId: string } & (
   | { type: 'addRoot'; tempId: string; realId: string; name: string }
-  | { type: 'addPerson'; tempId: string; realId: string; data: InsertPerson }
+  | { type: 'addPerson'; tempId: string; realId: string; data: InsertPerson; maybeWritten?: boolean }
   | { type: 'uploadPhoto'; personId: string }
-  | { type: 'addPartnership'; tempId: string; realId: string; personAId: string; personBId: string }
+  | { type: 'addPartnership'; tempId: string; realId: string; personAId: string; personBId: string; maybeWritten?: boolean }
   | { type: 'removePartnership'; id: string }
-  | { type: 'addParentChild'; tempId: string; realId: string; parentId: string; childId: string }
+  | { type: 'addParentChild'; tempId: string; realId: string; parentId: string; childId: string; maybeWritten?: boolean }
   | { type: 'removeParentChild'; id: string }
   | { type: 'updatePerson'; id: string; updates: UpdatePerson }
-  | { type: 'deletePerson'; id: string }
+  // undo: what the draft showed before the delete, to put back if the
+  // database refuses it (see useEditDraft.undoFailedDelete).
+  | { type: 'deletePerson'; id: string; undo?: DeleteUndo }
 )
+
+/**
+ * An insert whose request was sent but whose answer never arrived (a
+ * network error, not a database refusal) may have been written anyway.
+ * Such an op is flagged `maybeWritten`: it can't simply be cancelled any
+ * more — undoing it needs a real delete (see useEditDraft).
+ */
+export type InsertOp = Extract<PendingOp, { type: 'addPerson' | 'addPartnership' | 'addParentChild' }>
+
+export interface DeleteUndo {
+  person: PersonRow
+  partnerships: PartnershipRow[]
+  parentChild: ParentChildRow[]
+}
 
 /** A PendingOp before it has been given an opId (distributes over the union). */
 export type NewPendingOp = PendingOp extends infer T
@@ -105,6 +121,9 @@ export interface SaveQueueDeps {
 }
 
 const isDuplicate = (error: { code?: string } | null) => error?.code === '23505'
+// The database answered with a refusal (it has a code) — nothing was written.
+// Anything else (no code: the request failed in the network) may have been.
+const mayHaveReachedDb = (error: { code?: string }) => !error.code
 
 /**
  * Runs queued ops in order until the queue is empty. Throws on the first
@@ -144,9 +163,8 @@ export async function runSaveQueue(deps: SaveQueueDeps): Promise<void> {
 
       case 'addPerson': {
         const hasPhoto = !!getPhoto(op.tempId)
-        const { error } = await client.from('people').insert({
+        const row = {
           ...op.data,
-          id: op.realId,
           root_id: r(op.data.root_id),
           mother_id: op.data.mother_id ? r(op.data.mother_id) : null,
           original_person_id: op.data.original_person_id ? r(op.data.original_person_id) : null,
@@ -154,8 +172,18 @@ export async function runSaveQueue(deps: SaveQueueDeps): Promise<void> {
           photo_url: hasPhoto || op.data.photo_url?.startsWith('blob:')
             ? null
             : (op.data.photo_url ?? null),
-        })
-        if (error && !isDuplicate(error)) throw new Error(error.message)
+        }
+        const { error } = await client.from('people').insert({ ...row, id: op.realId })
+        if (error && !isDuplicate(error)) {
+          if (mayHaveReachedDb(error)) replaceHead({ ...op, maybeWritten: true })
+          throw new Error(error.message)
+        }
+        if (error && op.maybeWritten) {
+          // The earlier attempt did land — with the data as it was then.
+          // Edits made since were folded into this op: write them now.
+          await checkWritten(client, 'people', op.realId, await client.from('people')
+            .update(row).eq('id', op.realId).select('id'))
+        }
         // The row exists now. If a photo still needs uploading, turn this op
         // into that follow-up step instead of dropping it — so a failed
         // upload is retried on its own, without re-inserting the person.
@@ -193,7 +221,10 @@ export async function runSaveQueue(deps: SaveQueueDeps): Promise<void> {
           const { error } = await client
             .from('partnerships')
             .insert({ id: op.realId, person_a_id: a, person_b_id: b })
-          if (error && !isDuplicate(error)) throw new Error(error.message)
+          if (error && !isDuplicate(error)) {
+            if (mayHaveReachedDb(error)) replaceHead({ ...op, maybeWritten: true })
+            throw new Error(error.message)
+          }
           realId = op.realId
         }
         done()
@@ -216,7 +247,10 @@ export async function runSaveQueue(deps: SaveQueueDeps): Promise<void> {
         const { error } = await client
           .from('parent_child')
           .insert({ id: op.realId, parent_id: parentId, child_id: childId })
-        if (error && !isDuplicate(error)) throw new Error(error.message)
+        if (error && !isDuplicate(error)) {
+          if (mayHaveReachedDb(error)) replaceHead({ ...op, maybeWritten: true })
+          throw new Error(error.message)
+        }
         if (error) {
           // Either our own earlier attempt landed, or this link already
           // existed under a different id — point local state at whichever.
@@ -259,16 +293,12 @@ export async function runSaveQueue(deps: SaveQueueDeps): Promise<void> {
 
       case 'deletePerson': {
         const id = r(op.id)
-        // Only the owner may delete people. Check first, so a refused delete
-        // can't leave the person in place with their links already removed.
+        // Only the owner may delete people — say so plainly before trying.
         await requireOwner(client)
-        const { error: e1 } = await client.from('partnerships').delete()
-          .or(`person_a_id.eq.${id},person_b_id.eq.${id}`)
-        if (e1) throw new Error(e1.message)
-        const { error: e2 } = await client.from('parent_child').delete().eq('child_id', id)
-        if (e2) throw new Error(e2.message)
-        await checkWritten(client, 'people', id,
-          await client.from('people').delete().eq('id', id).select('id'))
+        // One transaction (migration 007): the person, their marriages and
+        // links, and their shortcut rows all go — or, on any error, nothing.
+        const { error } = await client.rpc('delete_person', { p_id: id })
+        if (error) throw new Error(error.message)
         done()
         break
       }

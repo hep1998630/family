@@ -1,5 +1,6 @@
 import { createPublicClient } from '@/lib/supabase/server'
 import TreeApp from '@/components/branch/TreeApp'
+import { readAll } from '@/lib/supabase/readAll'
 import { loadSavedViews } from '@/lib/views-server'
 
 export default async function ViewPage({
@@ -22,12 +23,13 @@ export default async function ViewPage({
     { data: parentChild },
     savedViews,
   ] = await Promise.all([
-    supabase.from('roots').select('*').order('created_at'),
-    // Fixed order: the database otherwise returns rows in whatever order
-    // they're stored, which shifts when a row is edited.
-    supabase.from('people').select('*').order('created_at').order('id'),
-    supabase.from('partnerships').select('*').order('created_at').order('id'),
-    supabase.from('parent_child').select('*').order('created_at').order('id'),
+    // Page by page (the API stops at 1000 rows), in a fixed order: the
+    // database otherwise returns rows in whatever order they're stored,
+    // which shifts when a row is edited.
+    readAll(supabase, 'roots'),
+    readAll(supabase, 'people'),
+    readAll(supabase, 'partnerships'),
+    readAll(supabase, 'parent_child'),
     loadSavedViews(supabase),
   ])
 

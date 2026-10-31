@@ -7,6 +7,7 @@
 
 import JSZip from 'jszip'
 import { createClient } from '@/lib/supabase/client'
+import { readAll } from '@/lib/supabase/readAll'
 import {
   buildFamilyExport, buildGedcom, buildReadme, photoPath, photoTargets,
   type FamilyData, type PhotoResult,
@@ -31,10 +32,10 @@ export async function runFamilyExport(onProgress: (p: ExportProgress) => void): 
   onProgress({ stage: 'data' })
   const supabase = createClient()
   const [roots, people, partnerships, parentChild] = await Promise.all([
-    supabase.from('roots').select('*').order('created_at').order('id'),
-    supabase.from('people').select('*').order('created_at').order('id'),
-    supabase.from('partnerships').select('*').order('created_at').order('id'),
-    supabase.from('parent_child').select('*').order('created_at').order('id'),
+    readAll(supabase, 'roots'),
+    readAll(supabase, 'people'),
+    readAll(supabase, 'partnerships'),
+    readAll(supabase, 'parent_child'),
   ])
   for (const r of [roots, people, partnerships, parentChild]) if (r.error) throw new Error(r.error.message)
   const data: FamilyData = {

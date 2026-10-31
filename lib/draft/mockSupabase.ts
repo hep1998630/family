@@ -121,8 +121,27 @@ export function createMockDb() {
 
   const client = {
     from: (table: string) => new Query(table),
-    rpc: async (fn: string) =>
-      fn === 'is_owner' ? { data: isOwner, error: null } : { data: null, error: { message: `no rpc ${fn}` } },
+    rpc: async (fn: string, args: Record<string, string> = {}) => {
+      if (fn === 'is_owner') return { data: isOwner, error: null }
+      if (fn !== 'delete_person') return { data: null, error: { message: `no rpc ${fn}` } }
+      // Like migration 007's delete_person: all or nothing.
+      const failure = takeFailure('rpc', 'delete_person')
+      if (failure?.mode === 'before') return { data: null, error: { message: 'injected delete_person failure' } }
+      const id = args.p_id
+      if (tables.people.some(p => p.id === id)) {
+        if (!isOwner) return { data: null, error: { message: 'only the owner can delete people', code: '42501' } }
+        const ids = tables.people.filter(p => p.id === id || p.original_person_id === id).map(p => p.id)
+        if (tables.parent_child.some(r => ids.includes(r.parent_id as string))
+          || tables.people.some(p => ids.includes(p.mother_id as string) && !ids.includes(p.id as string))) {
+          return { data: null, error: { message: 'this person still has children', code: '23503' } }
+        }
+        tables.partnerships = tables.partnerships.filter(r => !ids.includes(r.person_a_id as string) && !ids.includes(r.person_b_id as string))
+        tables.parent_child = tables.parent_child.filter(r => !ids.includes(r.child_id as string))
+        tables.people = tables.people.filter(p => !ids.includes(p.id as string))
+      }
+      if (failure?.mode === 'after') return { data: null, error: { message: 'injected lost response for delete_person' } }
+      return { data: null, error: null }
+    },
     storage: {
       from: () => ({
         upload: async (path: string) => {

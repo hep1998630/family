@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { newUuid, runSaveQueue, type NewPendingOp, type PendingOp } from '@/lib/draft/saveQueue'
+import { deletePersonOps, removeLinkOps } from '@/lib/draft/draftOps'
 import { settleUploadedPhoto, type PendingPhoto } from '@/lib/draft/pendingPhotos'
 import type {
   PersonRow, RootRow, PartnershipRow, ParentChildRow,
@@ -42,6 +43,19 @@ export function useEditDraft(
   const pendingPhotos = useRef<Map<string, PendingPhoto>>(new Map())
 
   const supabase = createClient()
+
+  // The latest state, for callbacks that need it without re-creating.
+  const stateRef = useRef({ people, partnerships, parentChildRows })
+  stateRef.current = { people, partnerships, parentChildRows }
+
+  // Leaving the page (closing the tab, reloading) with unsaved changes
+  // makes the browser ask first.
+  useEffect(() => {
+    if (opCount === 0) return
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [opCount])
 
   const mutateOps = useCallback((fn: (ops: PendingOp[]) => PendingOp[]) => {
     opsRef.current = fn(opsRef.current)
@@ -114,17 +128,9 @@ export function useEditDraft(
   // ── removePartnership ───────────────────────────────────────
   const removePartnership = useCallback(async (id: string): Promise<boolean> => {
     setPartnerships(prev => prev.filter(p => p.id !== id))
-    const queued = opsRef.current.find(op => op.type === 'addPartnership' && op.tempId === id)
-    if (queued && !isInFlight(queued)) {
-      // Never written — just cancel it.
-      mutateOps(ops => ops.filter(op => op !== queued))
-    } else {
-      // Already written (or being written right now) — delete it. A temp id
-      // here is remapped to the real one once that write resolves.
-      enqueue({ type: 'removePartnership', id })
-    }
+    mutateOps(ops => removeLinkOps(ops, 'partnership', id, isInFlight))
     return true
-  }, [enqueue, mutateOps, isInFlight])
+  }, [mutateOps, isInFlight])
 
   // ── addParentChild ──────────────────────────────────────────
   const addParentChild = useCallback(async (
@@ -146,14 +152,9 @@ export function useEditDraft(
   // ── removeParentChild ───────────────────────────────────────
   const removeParentChild = useCallback(async (id: string): Promise<boolean> => {
     setParentChildRows(prev => prev.filter(r => r.id !== id))
-    const queued = opsRef.current.find(op => op.type === 'addParentChild' && op.tempId === id)
-    if (queued && !isInFlight(queued)) {
-      mutateOps(ops => ops.filter(op => op !== queued))
-    } else {
-      enqueue({ type: 'removeParentChild', id })
-    }
+    mutateOps(ops => removeLinkOps(ops, 'parentChild', id, isInFlight))
     return true
-  }, [enqueue, mutateOps, isInFlight])
+  }, [mutateOps, isInFlight])
 
   // ── updatePerson ────────────────────────────────────────────
   const updatePerson = useCallback(async (
@@ -199,31 +200,44 @@ export function useEditDraft(
 
   // ── deletePerson ────────────────────────────────────────────
   const deletePerson = useCallback(async (id: string): Promise<boolean> => {
+    // What the draft shows now — put back if the database refuses the delete.
+    const person = stateRef.current.people.find(p => p.id === id)
+    const undo = person && {
+      person,
+      partnerships: stateRef.current.partnerships.filter(p => p.person_a_id === id || p.person_b_id === id),
+      parentChild: stateRef.current.parentChildRows.filter(r => r.parent_id === id || r.child_id === id),
+    }
     setPeople(prev => prev.filter(p => p.id !== id))
     setPartnerships(prev => prev.filter(p => p.person_a_id !== id && p.person_b_id !== id))
     setParentChildRows(prev => prev.filter(r => r.parent_id !== id && r.child_id !== id))
     const photo = pendingPhotos.current.get(id)
     if (photo) { URL.revokeObjectURL(photo.blobUrl); pendingPhotos.current.delete(id) }
-
-    const queuedInsert = opsRef.current.find(op => op.type === 'addPerson' && op.tempId === id)
-    const neverWritten = !!queuedInsert && !isInFlight(queuedInsert)
-
-    mutateOps(prev => {
-      // Drop every not-yet-started op that involves this person…
-      const filtered = prev.filter(op => {
-        if (isInFlight(op)) return true
-        if (op.type === 'addPerson' && op.tempId === id) return false
-        if (op.type === 'addPartnership' && (op.personAId === id || op.personBId === id)) return false
-        if (op.type === 'addParentChild' && (op.parentId === id || op.childId === id)) return false
-        if (op.type === 'updatePerson' && op.id === id) return false
-        if (op.type === 'uploadPhoto' && op.personId === id) return false
-        return true
-      })
-      // …and, unless it was never written at all, delete the row too.
-      return neverWritten ? filtered : [...filtered, { opId: newUuid(), type: 'deletePerson', id }]
-    })
+    mutateOps(prev => deletePersonOps(prev, id, isInFlight, undo))
     return true
   }, [mutateOps, isInFlight])
+
+  /**
+   * After a failed save whose next step is deleting a person: give up on
+   * that delete and show the person again, so the rest can be saved.
+   */
+  const undoFailedDelete = useCallback(() => {
+    const head = opsRef.current[0]
+    if (savingRef.current || head?.type !== 'deletePerson') return
+    mutateOps(ops => ops.slice(1))
+    const undo = head.undo
+    if (undo) {
+      const r = (rowId: string) => idMapRef.current.get(rowId) ?? rowId
+      const person = { ...undo.person, id: r(undo.person.id) }
+      setPeople(prev => prev.some(p => p.id === person.id) ? prev : [...prev, person])
+      setPartnerships(prev => [...prev, ...undo.partnerships
+        .map(p => ({ ...p, id: r(p.id), person_a_id: r(p.person_a_id), person_b_id: r(p.person_b_id) }))
+        .filter(p => !prev.some(x => x.id === p.id))])
+      setParentChildRows(prev => [...prev, ...undo.parentChild
+        .map(x => ({ ...x, id: r(x.id), parent_id: r(x.parent_id), child_id: r(x.child_id) }))
+        .filter(x => !prev.some(y => y.id === x.id))])
+    }
+    setSaveError(null)
+  }, [mutateOps])
 
   // ── hasConnections helper ───────────────────────────────────
   const hasConnections = useCallback((
@@ -310,5 +324,10 @@ export function useEditDraft(
     isSaving,
     saveError,
     hasPendingChanges: opCount > 0,
+    /** Set while a save failed on deleting this person — offer «إلغاء الحذف». */
+    failedDeleteName: saveError && opsRef.current[0]?.type === 'deletePerson'
+      ? ((opsRef.current[0] as Extract<PendingOp, { type: 'deletePerson' }>).undo?.person.name ?? '')
+      : null,
+    undoFailedDelete,
   }
 }

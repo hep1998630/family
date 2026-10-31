@@ -69,12 +69,12 @@ export function usePeople(initialPeople: PersonRow[] = []) {
     return true
   }, [])
 
-  // ── Delete person — unlinks partnerships + child rows, then deletes ──
+  // ── Delete person (and their links, in one step) ──
   const deletePerson = useCallback(async (id: string): Promise<boolean> => {
     setLoading(true)
     setError(null)
 
-    // 0. Only the owner may delete people — check before touching any link.
+    // Only the owner may delete people — say so plainly before trying.
     try {
       await requireOwner(supabase)
     } catch (e) {
@@ -83,27 +83,12 @@ export function usePeople(initialPeople: PersonRow[] = []) {
       return false
     }
 
-    // 1. Remove all partnerships involving this person
-    const { error: e1 } = await supabase
-      .from('partnerships')
-      .delete()
-      .or(`person_a_id.eq.${id},person_b_id.eq.${id}`)
-    if (e1) { setError(e1.message); setLoading(false); return false }
-
-    // 2. Remove parent_child rows where this person is a child
-    const { error: e2 } = await supabase
-      .from('parent_child')
-      .delete()
-      .eq('child_id', id)
-    if (e2) { setError(e2.message); setLoading(false); return false }
-
-    // 3. Delete the person (DB on delete restrict for parent_id is fine —
-    //    we only allow this when the person has no children)
-    const e3 = await writeError(supabase, 'people', id,
-      await supabase.from('people').delete().eq('id', id).select('id'))
+    // The person, their marriages and links, and their shortcut rows — in
+    // one transaction (migration 007): all of it, or on error none of it.
+    const { error: e3 } = await supabase.rpc('delete_person', { p_id: id })
 
     setLoading(false)
-    if (e3) { setError(e3); return false }
+    if (e3) { setError(e3.message); return false }
     return true
   }, [])
 
