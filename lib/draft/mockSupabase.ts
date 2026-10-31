@@ -35,6 +35,7 @@ export function createMockDb() {
   let isOwner = true
   const uploads: string[] = []
   const removed: string[] = []
+  const reads: string[] = [] // tables read with select()
   let storageFailures = 0
 
   const takeFailure = (table: string, op: string) => {
@@ -107,6 +108,7 @@ export function createMockDb() {
         tables[this.table] = rows.filter(r => !hit.includes(r))
         result = { data: this.returning ? hit.map(r => ({ id: r.id })) : null, error: null }
       } else {
+        reads.push(this.table)
         result = { data: rows.filter(match).slice(0, this.limitN).map(r => ({ ...r })), error: null }
       }
 
@@ -135,7 +137,9 @@ export function createMockDb() {
           removed.push(...paths)
           return { data: paths.map(name => ({ name })), error: null }
         },
-        getPublicUrl: (path: string) => ({ data: { publicUrl: `${PUBLIC_URL}${path}` } }),
+        getPublicUrl: (path: string, opts?: { cacheNonce?: string }) => ({
+          data: { publicUrl: `${PUBLIC_URL}${path}${opts?.cacheNonce ? `?cacheNonce=${opts.cacheNonce}` : ''}` },
+        }),
       }),
     },
   } as unknown as SupabaseClient<Database>
@@ -145,6 +149,7 @@ export function createMockDb() {
     tables,
     uploads,
     removed,
+    reads,
     failNext: (table: string, op: string, mode: FailureMode = 'before') => failures.push({ table, op, mode }),
     failNextUpload: () => { storageFailures += 1 },
     /** Make `op` on `table` silently affect 0 rows, as RLS does for a refused write. */

@@ -1,30 +1,45 @@
-// Changing a profile photo through the crop step, on a 360px phone:
-// choose a (sideways) phone photo → crop → «حفظ الصورة» → save. The new
-// photo gets a new file name and URL, the old file is deleted, and the
-// cropping library is only downloaded once a photo is picked.
+// Changing a profile photo through the crop step, on a 360px phone.
 //
 //   npm run e2e:photo-crop
+//
+// Checks that:
+//  - the crop code is downloaded only once a photo is picked, and a failed
+//    download shows an error and keeps the page and the unsaved draft;
+//  - keyboard: focus moves into the crop step, Tab stays inside, Enter on
+//    a button doesn't save the profile underneath, focus comes back after;
+//  - cancelling while the crop is being prepared drops the result;
+//  - replacing a photo gives a new URL, while the OLD URL and a shortcut
+//    row's copy of it still load (no photo file is ever deleted);
+//  - the saved image is 512×512 and upright even for a sideways phone photo.
 //
 // Runs against an in-memory fake Supabase (database AND storage) — never
 // the real project. E2E_SHOTS=<dir> also saves screenshots there.
 import { chromium, devices } from 'playwright'
-import { authCookie, checker, startApp } from './harness.mjs'
+import { authCookie, checker, installPhotoHelpers, sidewaysPhotoFile, startApp } from './harness.mjs'
 import { PNG_1PX } from './mock-supabase.mjs'
 import { makeSeed } from './seed.mjs'
 
 const MOCK = 'http://localhost:54329'
+const t = '2026-01-01T00:00:00.000Z'
 const seed = makeSeed()
 const ROOT = seed.roots[0].id
 const maryam = seed.people.find(p => p.name === 'مريم')
-const OLD = `${maryam.id}.jpg` // the old fixed-name style
-const OLD_URL = `${MOCK}/storage/v1/object/public/avatars/${OLD}`
-maryam.photo_url = OLD_URL
-seed.files = { [`avatars/${OLD}`]: { body: PNG_1PX, type: 'image/png' } }
+// Her photo from before (the old `<id>.jpg` naming)…
+const LEGACY = `${maryam.id}.jpg`
+const LEGACY_URL = `${MOCK}/storage/v1/object/public/avatars/${LEGACY}`
+maryam.photo_url = LEGACY_URL
+seed.files = { [`avatars/${LEGACY}`]: { body: PNG_1PX, type: 'image/png' } }
+// …and a shortcut row in another branch that copied that URL.
+const B = '00000000-0000-4000-8000-0000000000b0'
+seed.roots.push({ id: B, name: 'عائلة يوسف', canvas_x: 0, canvas_y: 0, created_at: t, updated_at: t })
+const shortcut = { ...maryam, id: '00000000-0000-4000-8000-0000000000b1', root_id: B, is_shortcut: true, original_person_id: maryam.id }
+seed.people.push(shortcut)
 const shots = process.env.E2E_SHOTS
 
 const { check, finish } = checker()
 const { app, mockUrl, stop } = await startApp({ seed })
 const state = async () => (await fetch(`${mockUrl}/__mock/state`)).json()
+const status = async url => (await fetch(url)).status
 const browser = await chromium.launch()
 try {
   const ctx = await browser.newContext({ ...devices['Pixel 7'], viewport: { width: 360, height: 760 } })
@@ -38,87 +53,110 @@ try {
   await page.goto(`${app}/edit?root=${ROOT}&focus=${maryam.id}`)
   await page.getByRole('button', { name: 'تعديل', exact: true }).click()
   const dialog = page.getByRole('dialog').first()
-  await dialog.getByTestId('photo-input').waitFor({ state: 'attached' })
+  const input = dialog.getByTestId('photo-input')
+  await input.waitFor({ state: 'attached' })
   check(cropChunks.length === 0, `the crop code is not downloaded before a photo is picked (${cropChunks.length} requests)`)
-
-  // A phone photo stored sideways (EXIF orientation 6): 1200×800 pixels,
-  // red left half / blue right half — upright it is red on top, blue below.
-  const photo = await page.evaluate(async () => {
-    const c = document.createElement('canvas'); c.width = 1200; c.height = 800
-    const x = c.getContext('2d')
-    x.fillStyle = '#ff0000'; x.fillRect(0, 0, 600, 800)
-    x.fillStyle = '#0000ff'; x.fillRect(600, 0, 600, 800)
-    const jpeg = new Uint8Array(await (await new Promise(r => c.toBlob(r, 'image/jpeg', 0.95))).arrayBuffer())
-    const app1 = [0xff, 0xe1, 0x00, 0x22, 0x45, 0x78, 0x69, 0x66, 0, 0, 0x4d, 0x4d, 0x00, 0x2a, 0, 0, 0, 8,
-      0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0]
-    return [...jpeg.slice(0, 2), ...app1, ...jpeg.slice(2)]
-  })
-  const file = { name: 'IMG_2041.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(photo) }
-
-  // ── 1. «إلغاء» leaves the photo as it was ──
-  await dialog.getByTestId('photo-input').setInputFiles(file)
+  const file = await sidewaysPhotoFile(page)
   const cropper = page.getByTestId('photo-cropper')
-  await cropper.waitFor()
-  check(cropChunks.length > 0, 'the crop code is downloaded once a photo is picked')
-  const previewBefore = await dialog.getByTestId('profile-photo-preview').getAttribute('src')
+  const preview = dialog.getByTestId('profile-photo-preview')
+
+  // ── 1. the crop code fails to download (offline / new version deployed) ──
+  const nickname = dialog.getByPlaceholder('مثلاً: أبو أحمد')
+  await nickname.fill('أم يوسف') // an unsaved edit in the profile
+  await page.route(/PhotoCropper/, route => route.abort())
+  await input.setInputFiles(file)
+  await cropper.getByText('تعذّر تحميل أداة قص الصورة', { exact: false }).waitFor()
+  check(true, 'a failed download shows an error in the crop step')
+  if (shots) await page.screenshot({ path: `${shots}/photo-crop-load-failed.png` })
+  await page.unroute(/PhotoCropper/)
+  await cropper.getByRole('button', { name: 'حاول مرة أخرى' }).click()
+  await cropper.locator('.reactEasyCrop_CropArea').waitFor()
+  check(true, '«حاول مرة أخرى» then loads it, without reloading the page')
   await cropper.getByRole('button', { name: 'إلغاء' }).click()
   await cropper.waitFor({ state: 'detached' })
-  check(await dialog.isVisible(), '«إلغاء» closes only the crop step, not the profile')
-  check(await dialog.getByTestId('profile-photo-preview').getAttribute('src') === previewBefore, '«إلغاء» keeps the old photo')
+  check(await nickname.inputValue() === 'أم يوسف', 'the unsaved edit in the profile is still there')
 
-  // ── 2. crop and save ──
-  await dialog.getByTestId('photo-input').setInputFiles(file)
-  await cropper.waitFor()
-  await cropper.locator('img').first().waitFor()
-  const frame = await cropper.locator('[data-testid="cropper"], .reactEasyCrop_CropArea').first().boundingBox()
-  check(frame && Math.abs(frame.width - frame.height) < 2 && frame.width > 200, `round square frame fills the phone width (${Math.round(frame?.width)}×${Math.round(frame?.height)})`)
-  const round = await cropper.locator('.reactEasyCrop_CropArea').evaluate(el => el.classList.contains('reactEasyCrop_CropAreaRound'))
-  check(round, 'the frame is a circle, like every avatar')
+  // ── 2. keyboard ──
+  const before = await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 60))
+  await input.setInputFiles(file)
+  await cropper.locator('.reactEasyCrop_CropArea').waitFor()
+  const inside = () => page.evaluate(() => !!document.activeElement?.closest('[data-testid="photo-cropper"]'))
+  check(await inside(), 'focus moves into the crop step')
+  let trapped = true
+  for (let i = 0; i < 8; i++) { await page.keyboard.press(i % 3 === 2 ? 'Shift+Tab' : 'Tab'); trapped &&= await inside() }
+  check(trapped, 'Tab and Shift+Tab stay inside the crop step')
+  await page.keyboard.press('Escape')
+  await cropper.waitFor({ state: 'detached' })
+  check(await dialog.isVisible(), 'Escape closes only the crop step, not the profile')
+  const after = await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 60))
+  check(after === before, 'focus goes back where it was')
+
+  // ── 3. cancelling while the crop is being prepared drops the result ──
+  const previewBefore = await preview.getAttribute('src')
+  await input.setInputFiles(file)
+  await cropper.locator('.reactEasyCrop_CropArea').waitFor()
+  await page.evaluate(() => {
+    // Make preparing the crop slow, as on an old phone.
+    const real = HTMLCanvasElement.prototype.toBlob
+    HTMLCanvasElement.prototype.toBlob = function (cb, ...rest) { real.call(this, b => setTimeout(() => cb(b), 1500), ...rest) }
+    window.__restoreToBlob = () => { HTMLCanvasElement.prototype.toBlob = real }
+  })
+  await cropper.getByRole('button', { name: 'حفظ الصورة' }).click()
+  await cropper.getByRole('button', { name: 'جارٍ التجهيز…' }).waitFor()
+  await cropper.getByRole('button', { name: 'إلغاء' }).click()
+  await cropper.waitFor({ state: 'detached' })
+  await page.waitForTimeout(4000) // until the slow crop has long finished
+  check(await preview.getAttribute('src') === previewBefore, '«إلغاء» while preparing: the late result is ignored')
+  await page.evaluate(() => window.__restoreToBlob())
+
+  // ── 4. crop and save; Enter on «حفظ الصورة» doesn't save the profile ──
+  await input.setInputFiles(file)
+  await cropper.locator('.reactEasyCrop_CropArea').waitFor()
   await cropper.getByRole('slider', { name: 'تكبير الصورة' }).fill('2')
-  const buttons = await cropper.getByRole('button').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().height)))
-  check(buttons.every(h => h >= 56), `big buttons (${buttons.join(', ')}px tall)`)
-  if (shots) await page.screenshot({ path: `${shots}/photo-crop-step.png` })
+  const patchesBefore = (await state()).log.filter(l => l.table === 'people').length
+  await cropper.getByRole('button', { name: 'حفظ الصورة' }).focus()
+  await page.keyboard.press('Enter')
+  await cropper.waitFor({ state: 'detached' })
+  check((await preview.getAttribute('src')).startsWith('blob:'), 'the profile shows the cropped photo')
+  check(await dialog.isVisible() && (await state()).log.filter(l => l.table === 'people').length === patchesBefore,
+    'Enter in the crop step did not save the profile underneath')
 
+  const saveAll = async () => {
+    await dialog.getByRole('button', { name: 'حفظ', exact: true }).click()
+    await page.getByRole('button', { name: 'حفظ', exact: true }).click()
+    await page.waitForFunction(() => !document.body.innerText.includes('جارٍ الحفظ'))
+    await page.waitForTimeout(500)
+    return (await state()).db.people.find(p => p.id === maryam.id).photo_url
+  }
+  const first = await saveAll()
+  check(new RegExp(`/avatars/${maryam.id}\\.webp\\?cacheNonce=[0-9a-f]{16}$`).test(first), `saved as her one photo file, with a fingerprinted URL: …${first.slice(-48)}`)
+  check(first !== LEGACY_URL, 'the URL changed')
+
+  const s1 = await state()
+  check(!s1.log.some(l => l.table === 'storage' && l.method === 'DELETE'), 'no photo file was deleted')
+  check(await status(LEGACY_URL) === 200, 'the old URL still loads')
+  check(await status(s1.db.people.find(p => p.id === shortcut.id).photo_url) === 200, 'the shortcut row’s photo still loads')
+
+  await installPhotoHelpers(page)
+  const out = await page.evaluate(async url => e2ePhoto.inspect(await (await fetch(url)).blob(), [0.2, 0.8]), first)
+  check(out.type === 'image/webp' && out.width === 512 && out.height === 512, `uploaded 512×512 WebP (${out.type} ${out.width}×${out.height}, ${out.bytes} bytes)`)
+  check(out.colours[0] === 'red' && out.colours[1] === 'blue', `the sideways phone photo came out upright (top ${out.colours[0]}, bottom ${out.colours[1]})`)
+  await page.waitForFunction(u => document.body.innerHTML.includes(encodeURIComponent(u)) || document.body.innerHTML.includes(u.replaceAll('&', '&amp;')), first)
+  check(true, 'the page shows the new photo')
+
+  // ── 5. replace it again: new URL again; the previous ones still load ──
+  await page.getByRole('button', { name: 'تعديل', exact: true }).click()
+  await page.getByRole('dialog').first().getByTestId('photo-input').setInputFiles(file)
+  await cropper.locator('.reactEasyCrop_CropArea').waitFor()
+  await cropper.getByRole('slider', { name: 'تكبير الصورة' }).fill('3') // a different crop
   await cropper.getByRole('button', { name: 'حفظ الصورة' }).click()
   await cropper.waitFor({ state: 'detached' })
-  const preview = dialog.getByTestId('profile-photo-preview')
-  check((await preview.getAttribute('src')).startsWith('blob:'), 'the profile shows the cropped photo')
-  if (shots) await dialog.screenshot({ path: `${shots}/photo-crop-preview.png` })
-
-  await dialog.getByRole('button', { name: 'حفظ', exact: true }).click()
-  await page.getByRole('button', { name: 'حفظ', exact: true }).click()
-  await page.waitForFunction(() => !document.body.innerText.includes('جارٍ الحفظ'))
-  await page.waitForTimeout(500)
-
-  const s = await state()
-  const saved = s.db.people.find(p => p.id === maryam.id).photo_url
-  const name = saved.split('/').pop()
-  check(new RegExp(`^${maryam.id}-[0-9a-f]{12}\\.webp$`).test(name), `saved under a new name: ${name}`)
-  check(saved !== OLD_URL, 'so the URL changed (no stale cached photo)')
-  check(s.files.includes(`avatars/${name}`), 'the new file is in storage')
-  check(!s.files.includes(`avatars/${OLD}`), `the old file ${OLD} was deleted`)
-  check(s.log.some(l => l.table === 'storage' && l.method === 'DELETE' && l.paths?.includes(OLD)), 'deleted only after the new photo was saved')
-  const order = s.log.filter(l => l.table === 'storage' || l.table === 'people').map(l => `${l.table}:${l.method}`)
-  check(order.indexOf('storage:DELETE') > order.lastIndexOf('people:PATCH'), `order: upload → photo_url → delete old (${order.join(' → ')})`)
-
-  // The uploaded file itself: 512×512 WebP, upright.
-  const out = await page.evaluate(async url => {
-    const blob = await (await fetch(url)).blob()
-    const bmp = await createImageBitmap(blob)
-    const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height
-    const x = c.getContext('2d'); x.drawImage(bmp, 0, 0)
-    const at = y => { const [r, , b] = x.getImageData(bmp.width / 2, y, 1, 1).data; return r > 200 && b < 60 ? 'red' : b > 200 && r < 60 ? 'blue' : `${r},${b}` }
-    return { type: blob.type, w: bmp.width, h: bmp.height, bytes: blob.size, top: at(bmp.height * 0.2), bottom: at(bmp.height * 0.8) }
-  }, saved)
-  check(out.type === 'image/webp' && out.w === 512 && out.h === 512, `uploaded 512×512 WebP (${out.type} ${out.w}×${out.h}, ${out.bytes} bytes)`)
-  check(out.top === 'red' && out.bottom === 'blue', `the sideways phone photo came out upright (top ${out.top}, bottom ${out.bottom})`)
-
-  await page.waitForFunction(n => document.body.innerHTML.includes(n), name)
-  check(true, 'the page now shows the new photo')
-  if (shots) {
-    await page.getByRole('dialog').first().waitFor({ state: 'detached' }).catch(() => {})
-    await page.screenshot({ path: `${shots}/photo-crop-saved.png` })
-  }
+  const second = await saveAll()
+  const s2 = await state()
+  check(second !== first && second.split('?')[0] === first.split('?')[0], 'a new crop: same file, new URL')
+  check(await status(first) === 200 && await status(LEGACY_URL) === 200, 'the earlier URLs still load')
+  check(s2.files.filter(f => f.startsWith(`avatars/${maryam.id}`)).length === 2, `one file per person (+ the old .jpg): ${s2.files.join(', ')}`)
+  check(cropChunks.length > 0, 'the crop code was downloaded once a photo was picked')
 } finally {
   await browser.close()
   await stop()

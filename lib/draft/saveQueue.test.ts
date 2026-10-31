@@ -138,9 +138,8 @@ describe('runSaveQueue', () => {
 
     await d.save()
     expect(db.tables.people).toHaveLength(1)
-    expect(db.uploads).toHaveLength(1)
-    expect(db.uploads[0]).toMatch(new RegExp(`^${realId}-[0-9a-f]{12}\\.jpg$`))
-    expect(db.tables.people[0].photo_url).toBe(`${PUBLIC_URL}${db.uploads[0]}`)
+    expect(db.uploads).toEqual([`${realId}.webp`])
+    expect(db.tables.people[0].photo_url).toMatch(new RegExp(`^${PUBLIC_URL}${realId}\\.webp\\?cacheNonce=[0-9a-f]{16}$`))
   })
 
   it('replacing a parent link removes the old row and adds the new one, safely on retry', async () => {
