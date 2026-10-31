@@ -1,17 +1,17 @@
 'use client'
 
-// Loaded only when someone picks a photo (next/dynamic in ProfileEdit), so
-// the cropping library stays out of the main bundle.
+// The crop area and its controls. Loaded only when someone picks a photo
+// (PhotoCropStep imports it on demand), so the cropping library stays out of
+// the main bundle.
 
-import { useCallback, useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useRef, useState } from 'react'
 import Cropper, { type Area } from 'react-easy-crop'
 import { cropToBlob, croppedFile } from '@/lib/photos/cropImage'
 
 const MIN_ZOOM = 1
 const MAX_ZOOM = 4
 
-interface PhotoCropperProps {
+export interface PhotoCropperProps {
   /** A blob: URL of the chosen photo. */
   src: string
   onDone: (file: File) => void
@@ -19,51 +19,32 @@ interface PhotoCropperProps {
 }
 
 /**
- * Full-screen crop step: the photo under a round frame — exactly what every
- * avatar shows. Drag (or pinch) to move and zoom, or use the big slider.
+ * The photo under a round frame — exactly what every avatar shows. Drag (or
+ * pinch) to move and zoom, or use the big slider.
  */
 export default function PhotoCropper({ src, onDone, onCancel }: PhotoCropperProps) {
   const [crop, setCrop] = useState({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(MIN_ZOOM)
   const [area, setArea] = useState<Area | null>(null)
   const [status, setStatus] = useState<'idle' | 'saving' | 'error' | 'unreadable'>('idle')
-
-  // Escape cancels the crop only, not the profile popup underneath.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.stopPropagation()
-      onCancel()
-    }
-    window.addEventListener('keydown', handler, true)
-    return () => window.removeEventListener('keydown', handler, true)
-  }, [onCancel])
+  // The <img> the cropper already decoded — drawn from directly when saving.
+  const imageRef = useRef<HTMLImageElement | null>(null)
 
   const onCropComplete = useCallback((_: Area, pixels: Area) => setArea(pixels), [])
+  const setImageRef = useCallback((ref: React.RefObject<HTMLImageElement>) => { imageRef.current = ref.current }, [])
 
   const save = async () => {
-    if (!area) return
+    if (!area || status === 'saving') return
     setStatus('saving')
     try {
-      onDone(croppedFile(await cropToBlob(src, area)))
+      onDone(croppedFile(await cropToBlob(imageRef.current ?? src, area)))
     } catch {
       setStatus('error')
     }
   }
 
-  return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="قص الصورة"
-      dir="rtl"
-      className="fixed inset-0 z-[60] flex flex-col bg-charcoal text-white"
-      data-testid="photo-cropper"
-    >
-      <p className="px-4 pt-4 pb-2 text-center font-sans text-lg font-bold">
-        حرّك الصورة وكبّرها حتى يظهر الوجه داخل الدائرة
-      </p>
-
+  return (
+    <>
       <div className="relative flex-1 min-h-0">
         {status === 'unreadable' ? (
           <p role="alert" className="absolute inset-0 flex items-center justify-center p-6 text-center font-sans text-lg">
@@ -83,6 +64,7 @@ export default function PhotoCropper({ src, onDone, onCancel }: PhotoCropperProp
             onCropChange={setCrop}
             onZoomChange={setZoom}
             onCropComplete={onCropComplete}
+            setImageRef={setImageRef}
             mediaProps={{ onError: () => setStatus('unreadable') }}
           />
         )}
@@ -99,7 +81,7 @@ export default function PhotoCropper({ src, onDone, onCancel }: PhotoCropperProp
             value={zoom}
             onChange={e => setZoom(Number(e.target.value))}
             aria-label="تكبير الصورة"
-            className="photo-zoom flex-1 h-12 accent-white cursor-pointer"
+            className="flex-1 h-12 accent-white cursor-pointer"
             disabled={status === 'unreadable'}
           />
           <span aria-hidden className="text-2xl leading-none">+</span>
@@ -120,6 +102,7 @@ export default function PhotoCropper({ src, onDone, onCancel }: PhotoCropperProp
           >
             {status === 'saving' ? 'جارٍ التجهيز…' : 'حفظ الصورة'}
           </button>
+          {/* Stays usable while saving: cancelling then drops the result. */}
           <button
             type="button"
             onClick={onCancel}
@@ -129,7 +112,6 @@ export default function PhotoCropper({ src, onDone, onCancel }: PhotoCropperProp
           </button>
         </div>
       </div>
-    </div>,
-    document.body,
+    </>
   )
 }
