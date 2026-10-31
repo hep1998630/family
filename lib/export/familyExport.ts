@@ -11,6 +11,7 @@
 // timestamps, admins, saved views and anything auth-related.
 
 import { findRootPerson } from '@/lib/tree/layout'
+import { extForMime } from '@/lib/photos/avatars'
 import type { PersonRow, PartnershipRow, ParentChildRow, RootRow } from '@/lib/supabase/types'
 
 export interface FamilyData {
@@ -162,10 +163,7 @@ export function photoTargets(data: FamilyData): { personId: string; url: string 
 
 /** `photos/<id>.<ext>`, the extension taken from the content type or the URL. */
 export function photoPath(personId: string, url: string, contentType?: string | null): string {
-  const fromType: Record<string, string> = {
-    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/heic': 'heic',
-  }
-  const byType = contentType ? fromType[contentType.split(';')[0].trim().toLowerCase()] : undefined
+  const byType = extForMime(contentType)
   const byUrl = new URL(url).pathname.match(/\.([a-z0-9]{2,5})$/i)?.[1]?.toLowerCase()
   return `photos/${personId}.${byType ?? (byUrl === 'jpeg' ? 'jpg' : byUrl) ?? 'jpg'}`
 }

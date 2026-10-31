@@ -17,6 +17,7 @@
     "e2e:crop-image": "node e2e/crop-image.mjs",
     "e2e:photo-crop": "node e2e/photo-crop.mjs",
     "e2e:name-wrapping": "node e2e/name-wrapping.mjs",
+    "e2e:data-integrity": "node e2e/data-integrity.mjs",
     "e2e:search-layout": "node e2e/search-layout.mjs"
   },
   "dependencies": {

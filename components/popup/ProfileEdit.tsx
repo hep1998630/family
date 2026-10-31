@@ -1,16 +1,14 @@
 'use client'
 
-import { useRef, useState } from 'react'
-import dynamic from 'next/dynamic'
+import { useEffect, useRef, useState } from 'react'
 import Avatar from '@/components/ui/Avatar'
 import Button from '@/components/ui/Button'
 import { Input, Select, Textarea } from '@/components/ui/Input'
 import type { PersonRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
 import { partnersOf, type Lineage } from '@/lib/tree/lineage'
-
-// The crop step (and its library) loads only once a photo is picked.
-const PhotoCropper = dynamic(() => import('./PhotoCropper'), { ssr: false })
+// (Light: the crop area and its library load only once a photo is picked.)
+import PhotoCropStep from './PhotoCropStep'
 
 interface ProfileEditProps {
   person: PersonRow
@@ -64,23 +62,39 @@ export default function ProfileEdit({
     return Object.keys(newErrors).length === 0
   }
 
+  // Every blob: URL made here, released when replaced and when the popup closes.
+  const blobUrls = useRef(new Set<string>())
+  const makeBlobUrl = (file: Blob) => {
+    const url = URL.createObjectURL(file)
+    blobUrls.current.add(url)
+    return url
+  }
+  const dropBlobUrl = (url: string | null) => {
+    if (url && blobUrls.current.delete(url)) URL.revokeObjectURL(url)
+  }
+  useEffect(() => {
+    const urls = blobUrls.current
+    return () => { urls.forEach(url => URL.revokeObjectURL(url)); urls.clear() }
+  }, [])
+
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = '' // so picking the same photo again still opens the crop step
     if (!file) return
-    setCropSrc(URL.createObjectURL(file))
+    dropBlobUrl(cropSrc)
+    setCropSrc(makeBlobUrl(file))
   }
 
   const closeCrop = () => {
-    if (cropSrc) URL.revokeObjectURL(cropSrc)
+    dropBlobUrl(cropSrc)
     setCropSrc(null)
   }
 
   const handleCropped = (file: File) => {
     closeCrop()
-    if (photoFile && photoPreview) URL.revokeObjectURL(photoPreview)
+    dropBlobUrl(photoPreview) // (only ever one of ours, never the saved photo's URL)
     setPhotoFile(file)
-    setPhotoPreview(URL.createObjectURL(file))
+    setPhotoPreview(makeBlobUrl(file))
   }
 
   const handleSave = async () => {
@@ -132,7 +146,7 @@ export default function ProfileEdit({
           bg-slate-100 flex items-center justify-center
           cursor-pointer group overflow-hidden
         "
-        onClick={() => fileInputRef.current?.click()}
+        onClick={() => { if (!cropSrc) fileInputRef.current?.click() }}
       >
         {photoPreview ? (
           // Round, like every avatar: what you see here is what the tree shows.
@@ -173,7 +187,7 @@ export default function ProfileEdit({
         <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-white to-transparent" />
       </div>
 
-      {cropSrc && <PhotoCropper src={cropSrc} onDone={handleCropped} onCancel={closeCrop} />}
+      {cropSrc && <PhotoCropStep src={cropSrc} onDone={handleCropped} onCancel={closeCrop} />}
 
       {/* ── Form ── */}
       <div className="px-6 pb-7 pt-2 flex flex-col gap-4">

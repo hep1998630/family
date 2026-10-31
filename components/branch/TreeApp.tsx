@@ -28,6 +28,7 @@ import {
   NODE_HEIGHT, SHOW_MORE_GAP, SHOW_MORE_HEIGHT,
 } from '@/lib/tree/layout'
 import { buildLineage, closeFamilyIds, partnersOf } from '@/lib/tree/lineage'
+import { childRootId, planParentLinks } from '@/lib/tree/parentLinks'
 import type { PersonRow, PartnershipRow, ParentChildRow, RootRow, SavedViewRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
 
@@ -393,16 +394,17 @@ function TreeAppMain({
       gender: values.gender || null,
     })
 
-    // Make the parent_child rows match the chosen father and mother.
-    const desired = [...new Set([values.father_id, values.mother_id].filter((x): x is string => !!x))]
-    const current = parentChildRows.filter(r => r.child_id === id)
-    for (const row of current) {
-      if (!desired.includes(row.parent_id)) await removeParentChild(row.id)
-    }
-    for (const parentId of desired) {
-      if (!current.some(r => r.parent_id === parentId)) await addParentChild(parentId, id)
-    }
-  }, [updatePerson, uploadPhoto, parentChildRows, removeParentChild, addParentChild])
+    // Change only the parent links the form changed: the father and mother
+    // it showed (the same lineage it was filled from) against the chosen ones.
+    const { removeRowIds, addParentIds } = planParentLinks(
+      id,
+      parentChildRows,
+      { fatherId: lineage.fatherOf(id)?.id ?? null, motherId: lineage.motherOf(id)?.id ?? null },
+      { fatherId: values.father_id, motherId: values.mother_id },
+    )
+    for (const rowId of removeRowIds) await removeParentChild(rowId)
+    for (const parentId of addParentIds) await addParentChild(parentId, id)
+  }, [updatePerson, uploadPhoto, parentChildRows, lineage, removeParentChild, addParentChild])
 
   const handleDeletePerson = useCallback((id: string) => {
     deletePerson(id)
@@ -490,7 +492,7 @@ function TreeAppMain({
       photo_url: null,
       mother_id: motherId,
       gender: values.gender || null,
-      root_id: parent.root_id,
+      root_id: childRootId(parent, fatherId, peopleById),
       is_shortcut: false,
       original_person_id: null,
     })
@@ -501,7 +503,7 @@ function TreeAppMain({
       await addParentChild(parentId, newChild.id)
     }
     setModal({ type: 'none' })
-  }, [modal, people, addPerson, addParentChild])
+  }, [modal, people, peopleById, addPerson, addParentChild])
 
   const handleConfirmAddRoot = useCallback(async (
     rootName: string,
@@ -631,7 +633,9 @@ function TreeAppMain({
             </div>
           )}
 
-          {draft.saveError && !draft.isSaving && <SaveErrorBanner saveError={draft.saveError} />}
+          {draft.saveError && !draft.isSaving && (
+            <SaveErrorBanner saveError={draft.saveError} failedDeleteName={draft.failedDeleteName} onUndoDelete={draft.undoFailedDelete} />
+          )}
         </header>
 
         {!selectedRoot ? (

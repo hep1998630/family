@@ -16,13 +16,15 @@ export interface PixelArea {
   height: number
 }
 
-/** Keeps a crop inside the image (rounding can push it a pixel past an edge). */
+/**
+ * Keeps a crop square and inside the image: rounding can push it a pixel
+ * past an edge, and both sides shrink to whichever limit is smaller.
+ */
 export function clampArea(area: PixelArea, imageWidth: number, imageHeight: number): PixelArea {
-  const width = Math.max(1, Math.min(Math.round(area.width), imageWidth))
-  const height = Math.max(1, Math.min(Math.round(area.height), imageHeight))
-  const x = Math.min(Math.max(0, Math.round(area.x)), imageWidth - width)
-  const y = Math.min(Math.max(0, Math.round(area.y)), imageHeight - height)
-  return { x, y, width, height }
+  const side = Math.max(1, Math.min(Math.round(area.width), Math.round(area.height), imageWidth, imageHeight))
+  const x = Math.min(Math.max(0, Math.round(area.x)), imageWidth - side)
+  const y = Math.min(Math.max(0, Math.round(area.y)), imageHeight - side)
+  return { x, y, width: side, height: side }
 }
 
 export function loadImage(src: string): Promise<HTMLImageElement> {
@@ -37,13 +39,30 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
 const toBlob = (canvas: HTMLCanvasElement, type: string, quality: number) =>
   new Promise<Blob | null>(resolve => canvas.toBlob(resolve, type, quality))
 
-/** Draws `area` of the photo at `src` into a square image file. */
+// Asked for WebP, a browser that can't write it silently hands back a PNG.
+// Found out once per page (on a 1×1 canvas), not by encoding every photo twice.
+let webpSupport: Promise<boolean> | null = null
+function canEncodeWebp(): Promise<boolean> {
+  if (!webpSupport) {
+    const probe = document.createElement('canvas')
+    probe.width = probe.height = 1
+    webpSupport = toBlob(probe, 'image/webp', AVATAR_QUALITY).then(b => b?.type === 'image/webp')
+  }
+  return webpSupport
+}
+
+/**
+ * Draws `area` of a photo into a square image file. `source` is the photo's
+ * URL, or — cheaper — the <img> the crop step already decoded.
+ */
 export async function cropToBlob(
-  src: string,
+  source: string | HTMLImageElement,
   area: PixelArea,
   { size = AVATAR_SIZE, quality = AVATAR_QUALITY } = {},
 ): Promise<Blob> {
-  const img = await loadImage(src)
+  const img = typeof source === 'string' || !source.complete || !source.naturalWidth
+    ? await loadImage(typeof source === 'string' ? source : source.src)
+    : source
   const a = clampArea(area, img.naturalWidth, img.naturalHeight)
   const canvas = document.createElement('canvas')
   canvas.width = size
@@ -57,12 +76,9 @@ export async function cropToBlob(
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(img, a.x, a.y, a.width, a.height, 0, 0, size, size)
 
-  // A browser that can't write WebP silently hands back a PNG instead.
-  const webp = await toBlob(canvas, 'image/webp', quality)
-  if (webp?.type === 'image/webp') return webp
-  const jpeg = await toBlob(canvas, 'image/jpeg', quality)
-  if (!jpeg) throw new Error('could not save the image')
-  return jpeg
+  const blob = await toBlob(canvas, (await canEncodeWebp()) ? 'image/webp' : 'image/jpeg', quality)
+  if (!blob) throw new Error('could not save the image')
+  return blob
 }
 
 /** Wraps the cropped image as a File, named after its format. */

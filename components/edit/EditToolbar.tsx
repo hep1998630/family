@@ -59,8 +59,16 @@ export default function EditToolbar({
     )
 }
 
-/** Full-width save error, shown under the top bar. */
-export function SaveErrorBanner({ saveError }: { saveError: string }) {
+/**
+ * Full-width save error, shown under the top bar. When the failed step is
+ * deleting a person, `onUndoDelete` offers to give up on that delete (the
+ * person comes back) so everything else can still be saved.
+ */
+export function SaveErrorBanner({ saveError, failedDeleteName, onUndoDelete }: {
+    saveError: string
+    failedDeleteName?: string | null
+    onUndoDelete?: () => void
+}) {
     return (
         <div
             role="alert"
@@ -80,13 +88,26 @@ export function SaveErrorBanner({ saveError }: { saveError: string }) {
                         أو اطلب من مالك الموقع أن يجريه.
                     </p>
                 </>
+            ) : failedDeleteName != null ? (
+                <p>
+                    تعذّر حذف {failedDeleteName ? <span className="name-text font-bold">«{failedDeleteName}»</span> : 'هذا الشخص'}،
+                    ولم يُحذف شيء. يمكنك المحاولة مرة أخرى، أو إلغاء الحذف وحفظ باقي التغييرات.
+                </p>
             ) : (
-                <>
-                    <p>تعذّر حفظ بعض التغييرات. حاول مرة أخرى — ما تم حفظه لن يتكرر.</p>
-                    <p dir="ltr" className="text-sm font-normal text-red-600 text-left break-words">
-                        {saveError}
-                    </p>
-                </>
+                <p>تعذّر حفظ بعض التغييرات. حاول مرة أخرى — ما تم حفظه لن يتكرر.</p>
+            )}
+            {!saveError.startsWith(PERMISSION_DENIED) && (
+                <p dir="ltr" className="text-sm font-normal text-red-600 text-left break-words">
+                    {saveError}
+                </p>
+            )}
+            {failedDeleteName != null && onUndoDelete && (
+                <button
+                    onClick={onUndoDelete}
+                    className="self-start mt-1 min-h-12 px-4 rounded-xl bg-white border-2 border-red-300 font-bold text-red-700 hover:border-red-500"
+                >
+                    إلغاء الحذف
+                </button>
             )}
         </div>
     )
@@ -95,6 +116,8 @@ export function SaveErrorBanner({ saveError }: { saveError: string }) {
 function AccountMenu({ adminName, hasPendingChanges }: { adminName: string; hasPendingChanges: boolean }) {
     const router = useRouter()
     const [open, setOpen] = useState(false)
+    // Logging out drops the unsaved draft — ask first.
+    const [confirmingLogout, setConfirmingLogout] = useState(false)
     // Lives here, not in the dropdown, so progress survives the menu closing.
     const closeMenu = useCallback(() => setOpen(false), [])
     const familyExport = useFamilyExport(hasPendingChanges, closeMenu)
@@ -108,6 +131,7 @@ function AccountMenu({ adminName, hasPendingChanges }: { adminName: string; hasP
         document.addEventListener('mousedown', handler)
         return () => document.removeEventListener('mousedown', handler)
     }, [open])
+    useEffect(() => { if (!open) setConfirmingLogout(false) }, [open])
 
     const handleLogout = async () => {
         const supabase = createClient()
@@ -147,12 +171,32 @@ function AccountMenu({ adminName, hasPendingChanges }: { adminName: string; hasP
                         مسجل الدخول: <span className="font-semibold text-charcoal name-text">{adminName}</span>
                     </p>
                     {familyExport.button}
-                    <button
-                        onClick={handleLogout}
-                        className="h-12 rounded-xl border-2 border-walnut/30 font-sans text-base font-bold text-walnut hover:border-walnut"
-                    >
-                        تسجيل الخروج
-                    </button>
+                    {confirmingLogout ? (
+                        <div role="alert" className="flex flex-col gap-2">
+                            <p className="font-sans text-base font-semibold text-red-700">
+                                لديك تغييرات لم تُحفظ. إذا خرجت الآن فستُفقد.
+                            </p>
+                            <button
+                                onClick={handleLogout}
+                                className="min-h-12 rounded-xl border-2 border-red-400 font-sans text-base font-bold text-red-700 hover:bg-red-600 hover:text-white"
+                            >
+                                الخروج دون حفظ
+                            </button>
+                            <button
+                                onClick={() => setConfirmingLogout(false)}
+                                className="min-h-12 rounded-xl bg-walnut font-sans text-base font-bold text-white hover:bg-walnut-dark"
+                            >
+                                البقاء
+                            </button>
+                        </div>
+                    ) : (
+                        <button
+                            onClick={() => (hasPendingChanges ? setConfirmingLogout(true) : handleLogout())}
+                            className="h-12 rounded-xl border-2 border-walnut/30 font-sans text-base font-bold text-walnut hover:border-walnut"
+                        >
+                            تسجيل الخروج
+                        </button>
+                    )}
                 </div>
             )}
             {familyExport.panel}

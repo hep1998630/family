@@ -245,6 +245,8 @@ export type Database = {
       // From 003_add_auth_roles.sql — callable by anyone, answer for the caller.
       is_admin: { Args: Record<PropertyKey, never>; Returns: boolean }
       is_owner: { Args: Record<PropertyKey, never>; Returns: boolean }
+      // From 007_delete_person.sql — the owner deletes a person and their links at once.
+      delete_person: { Args: { p_id: string }; Returns: undefined }
     }
     Enums: { [_ in never]: never }
     CompositeTypes: { [_ in never]: never }
