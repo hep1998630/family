@@ -27,6 +27,9 @@ export const V_GAP = 100   // vertical gap between generations
 export const PARTNER_GAP = 24    // tight gap between a person and their partner(s)
 export const LEAF_V_GAP = 30     // vertical gap between vertically-stacked leaf siblings
 export const ROOT_OFFSET_X = 180  // base X offset between separate family roots
+/** The «عرض أجيال إضافية» button under a node cut off by maxDepth. */
+export const SHOW_MORE_GAP = 16      // between the node and the button
+export const SHOW_MORE_HEIGHT = 88   // the button's (fixed) height
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
@@ -43,9 +46,11 @@ export function computeLayout(
 ): LayoutedRoot[] {
   const base = buildContext(people, partnerships, parentChildRows)
 
-  // People who appear as a child in parent_child have a natural tree position.
-  // Used by buildTreeNode to decide reference vs full partner node.
-  const childIdsSet = new Set(parentChildRows.map(pc => pc.child_id))
+  // People drawn as someone's child have their own place in the tree, so
+  // as a partner they're shown as a reference. Only a parent in the SAME
+  // branch draws them: a founder later linked to a father in another
+  // branch is still drawn in full in their own.
+  const childIdsSet = childrenInOwnBranch(people, parentChildRows)
 
   const results: LayoutedRoot[] = []
   let canvasOffsetX = 100 // starting X for the first root
@@ -173,10 +178,23 @@ export function findRootPerson(
   people: PersonRow[],
   parentChildRows: ParentChildRow[],
 ): PersonRow | undefined {
-  const childIdsSet = new Set(parentChildRows.map(pc => pc.child_id))
+  // "Parentless" within this branch: a parent in another branch (the
+  // founder's own father, linked later) doesn't stop them being founder.
+  const childIdsSet = childrenInOwnBranch(people, parentChildRows)
   const rootPeople = people.filter(p => p.root_id === rootId && !p.is_shortcut)
   const parentless = rootPeople.filter(p => !childIdsSet.has(p.id))
   return earliestCreated(parentless.length > 0 ? parentless : rootPeople)
+}
+
+/** Ids of people who have a parent in their own branch (root). */
+function childrenInOwnBranch(people: PersonRow[], parentChildRows: ParentChildRow[]): Set<string> {
+  const rootOf = new Map(people.map(p => [p.id, p.root_id]))
+  const ids = new Set<string>()
+  for (const pc of parentChildRows) {
+    const childRoot = rootOf.get(pc.child_id)
+    if (childRoot !== undefined && rootOf.get(pc.parent_id) === childRoot) ids.add(pc.child_id)
+  }
+  return ids
 }
 
 /** Earliest `created_at`, ties broken by id — the same answer whatever the input order. */
@@ -198,24 +216,40 @@ function isCreatedBefore(a: PersonRow, b: PersonRow): boolean {
 }
 
 /**
- * Number of parent_child hops from the root person down to `personId`
- * (root person itself = depth 0). Used to make sure a search/navigation
- * target is never hidden behind a `maxDepth` cap.
+ * The generation `personId` is drawn at in their branch's tree (the founder
+ * = 0). Used to make sure a search/navigation target is never hidden behind
+ * a `maxDepth` cap.
+ *
+ * A child is drawn under a parent in its own branch (a mother who married
+ * in has no parents there), so only those parents are followed — and with
+ * more than one (both parents from the branch), the deepest one counts.
  */
 export function computeDepthFromRoot(
   personId: string,
+  people: PersonRow[],
   parentChildRows: ParentChildRow[],
 ): number {
-  const childToParent = new Map(parentChildRows.map(pc => [pc.child_id, pc.parent_id]))
-  let depth = 0
-  let current = personId
-  const seen = new Set<string>()
-  while (childToParent.has(current) && !seen.has(current)) {
-    seen.add(current)
-    current = childToParent.get(current)!
-    depth++
+  const rootOf = new Map(people.map(p => [p.id, p.root_id]))
+  const parentsOf = new Map<string, string[]>()
+  for (const pc of parentChildRows) {
+    if (rootOf.get(pc.parent_id) !== rootOf.get(pc.child_id)) continue
+    parentsOf.set(pc.child_id, [...(parentsOf.get(pc.child_id) ?? []), pc.parent_id])
   }
-  return depth
+  const memo = new Map<string, number>()
+  const depth = (id: string, path: Set<string>): number => {
+    const known = memo.get(id)
+    if (known !== undefined) return known
+    let d = 0
+    for (const parent of parentsOf.get(id) ?? []) {
+      if (path.has(parent)) continue // a loop in bad data — stop there
+      path.add(parent)
+      d = Math.max(d, depth(parent, path) + 1)
+      path.delete(parent)
+    }
+    memo.set(id, d)
+    return d
+  }
+  return depth(personId, new Set([personId]))
 }
 
 // ── Tree building ─────────────────────────────────────────────────────────────
@@ -421,7 +455,8 @@ function assignPositions(node: TreeNode, x: number, y: number): void {
     let stackY = childY
     for (const child of node.children) {
       assignPositions(child, stackLeft, stackY)
-      stackY += NODE_HEIGHT + LEAF_V_GAP
+      // A cut-off child has the «عرض أجيال إضافية» button below it.
+      stackY += NODE_HEIGHT + LEAF_V_GAP + (child.truncated ? SHOW_MORE_GAP + SHOW_MORE_HEIGHT : 0)
     }
     return
   }

@@ -11,6 +11,7 @@ import path from 'node:path'
 import JSZip from 'jszip'
 import { parse } from 'gedcom'
 import { authCookie, checker, startApp } from './harness.mjs'
+import { PNG_1PX } from './mock-supabase.mjs'
 import { makeSeed } from './seed.mjs'
 
 // --shots: screenshots go to a temp dir during the run (writing inside the
@@ -44,6 +45,8 @@ seed.parent_child.push(
 )
 founder.photo_url = `${MOCK}/storage/v1/object/public/avatars/${founder.id}.png`
 mohammed.photo_url = `${MOCK}/storage/v1/object/public/avatars/${mohammed.id}.png`
+// Their files exist; سارة's (missing-sara.png) was never uploaded, so it 404s.
+seed.files = Object.fromEntries([founder, mohammed].map(p => [`avatars/${p.id}.png`, { body: PNG_1PX, type: 'image/png' }]))
 const realPeople = seed.people.filter(p => !p.is_shortcut)
 
 const { check, finish } = checker()

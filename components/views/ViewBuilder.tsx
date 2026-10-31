@@ -9,6 +9,7 @@ import { partnersOf, type Lineage } from '@/lib/tree/lineage'
 import { DEPTH_OPTIONS } from '@/lib/views'
 import type { SavedViewInput } from '@/hooks/useSavedViews'
 import type { PersonRow, PartnershipRow, ParentChildRow, RootRow, SavedViewRow } from '@/lib/supabase/types'
+import { matchesArabic, normalizeArabic } from '@/lib/search/arabic'
 
 interface ViewBuilderProps {
   /** The view being edited; omit to create a new one. */
@@ -68,11 +69,9 @@ export default function ViewBuilder({
   const shownName = nameTouched ? name : suggestedName
 
   const results = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return []
+    if (!normalizeArabic(query)) return []
     return people
-      .filter(p => !p.is_shortcut && (
-        lineage.label(p).toLowerCase().includes(q) || (p.nickname?.toLowerCase().includes(q) ?? false)))
+      .filter(p => !p.is_shortcut && (matchesArabic(lineage.label(p), query) || matchesArabic(p.nickname, query)))
       .slice(0, 8)
   }, [query, people, lineage])
 

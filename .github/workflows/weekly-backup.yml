@@ -45,40 +45,68 @@ jobs:
 
           mkdir -p backup
 
-          # roots/people/partnerships/parent_child all have public "select
-          # using (true)" RLS policies (see supabase/migrations/001 and
-          # 003), so the anon key can read all of them directly — no
-          # service-role key needed for a backup of public data.
-          for table in roots people partnerships parent_child; do
+          # All five tables have public "select using (true)" RLS policies
+          # (supabase/migrations/001, 003 and 005), so the anon key can read
+          # them directly — no service-role key needed for a backup of
+          # public data.
+          #
+          # The API returns at most 1000 rows per request and silently
+          # stops there, so each table is read page by page (ordered by id,
+          # so pages neither overlap nor skip) until a page comes back
+          # short, then the pages are joined into one <table>.json.
+          PAGE=1000
+          for table in roots people partnerships parent_child saved_views; do
             echo "Fetching $table ..."
+            offset=0
+            pages=()
+            while :; do
+              page="backup/$table.offset-$offset.json"
+              http_status=$(curl -sS -w "%{http_code}" -o "$page" \
+                -H "apikey: $SUPABASE_ANON_KEY" \
+                -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+                "$SUPABASE_URL/rest/v1/$table?select=*&order=id.asc&limit=$PAGE&offset=$offset")
 
-            http_status=$(curl -sS -w "%{http_code}" -o "backup/$table.json" \
-              -H "apikey: $SUPABASE_ANON_KEY" \
-              -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
-              "$SUPABASE_URL/rest/v1/$table?select=*")
+              # saved_views only exists once migration 005 has been run —
+              # back up everything else rather than fail the whole backup.
+              if [ "$table" = "saved_views" ] && [ "$http_status" = "404" ]; then
+                echo "::warning::saved_views not found (migration 005 not run?) — skipped"
+                rm -f "$page"
+                continue 2
+              fi
 
-            if [ "$http_status" != "200" ]; then
-              echo "::error::Fetching $table failed with HTTP $http_status"
-              cat "backup/$table.json"
-              exit 1
-            fi
+              if [ "$http_status" != "200" ]; then
+                echo "::error::Fetching $table failed with HTTP $http_status — see $page in the uploaded artifact for the raw response"
+                cat "$page"
+                exit 1
+              fi
 
-            # A misconfigured URL (e.g. one that already ends in /rest/v1,
-            # see .env.example's warning) or an expired/paused project
-            # often returns an HTML error page with a 200-looking status
-            # from an intermediate proxy — catch that by requiring the
-            # body to actually be valid JSON, not just checking the
-            # status code above.
-            if ! jq empty "backup/$table.json" 2>/dev/null; then
-              echo "::error::Response for $table was not valid JSON — see backup/$table.json in the uploaded artifact for the raw response"
-              cat "backup/$table.json"
-              exit 1
-            fi
+              # A misconfigured URL (e.g. one that already ends in /rest/v1,
+              # see .env.example's warning) or an expired/paused project
+              # often returns an HTML error page with a 200-looking status
+              # from an intermediate proxy — catch that by requiring the
+              # body to actually be a JSON array, not just checking the
+              # status code above.
+              if ! jq -e 'type == "array"' "$page" >/dev/null 2>&1; then
+                echo "::error::Response for $table was not a JSON list — see $page in the uploaded artifact for the raw response"
+                cat "$page"
+                exit 1
+              fi
 
+              pages+=("$page")
+              rows=$(jq 'length' "$page")
+              if [ "$rows" -lt "$PAGE" ]; then break; fi
+              offset=$((offset + PAGE))
+            done
+
+            jq -s 'add' "${pages[@]}" > "backup/$table.json"
+            rm "${pages[@]}"
             echo "$table: $(jq 'length' "backup/$table.json") rows"
           done
 
+      # Also when the step above failed, so the raw failed response it
+      # points to is actually there to look at.
       - name: Upload backup artifact
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: family-tree-backup-${{ github.run_id }}

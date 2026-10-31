@@ -76,3 +76,58 @@ export function checker() {
   }
   return { check, finish, failures }
 }
+
+// ── Photo fixtures, shared by the photo checks ──────────────────────────────
+
+/**
+ * In-page helpers, defined on `window.e2ePhoto` by installPhotoHelpers():
+ *  - halves(w, h, type): a picture with a red left half and a blue right half;
+ *  - withOrientation6(jpeg): the same JPEG tagged "turn 90° clockwise to
+ *    show" (EXIF orientation 6), as phones store portrait photos — so shown
+ *    upright it is red on top, blue below;
+ *  - inspect(blob, at?): type, size, and the colour (red / blue / rgb) at the
+ *    horizontal centre and heights `at` (fractions, default [0.5]).
+ */
+const PHOTO_HELPERS = `window.e2ePhoto = {
+  halves(w, h, type) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h
+    const x = c.getContext('2d')
+    x.fillStyle = '#ff0000'; x.fillRect(0, 0, w / 2, h)
+    x.fillStyle = '#0000ff'; x.fillRect(w / 2, 0, w / 2, h)
+    return new Promise(r => c.toBlob(r, type, 0.95))
+  },
+  async withOrientation6(blob) {
+    const b = new Uint8Array(await blob.arrayBuffer())
+    const app1 = [0xff, 0xe1, 0x00, 0x22, 0x45, 0x78, 0x69, 0x66, 0, 0, 0x4d, 0x4d, 0x00, 0x2a, 0, 0, 0, 8,
+      0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0]
+    return new Blob([b.slice(0, 2), new Uint8Array(app1), b.slice(2)], { type: 'image/jpeg' })
+  },
+  async inspect(blob, at = [0.5]) {
+    const bmp = await createImageBitmap(blob)
+    const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height
+    const x = c.getContext('2d'); x.drawImage(bmp, 0, 0)
+    const colour = f => {
+      const [r, g, b] = x.getImageData(bmp.width / 2, Math.floor(bmp.height * f), 1, 1).data
+      return r > 200 && b < 60 ? 'red' : b > 200 && r < 60 ? 'blue' : 'rgb(' + r + ',' + g + ',' + b + ')'
+    }
+    return { type: blob.type, width: bmp.width, height: bmp.height, bytes: blob.size, colours: at.map(colour) }
+  },
+}`
+
+/** Defines window.e2ePhoto in `page` (see PHOTO_HELPERS). */
+export async function installPhotoHelpers(page) {
+  await page.evaluate(PHOTO_HELPERS)
+}
+
+/**
+ * A sideways phone photo as a file for setInputFiles: stored 1200×800 (red
+ * left / blue right) with EXIF orientation 6, i.e. upright red over blue.
+ */
+export async function sidewaysPhotoFile(page, name = 'IMG_2041.jpg') {
+  await installPhotoHelpers(page)
+  const bytes = await page.evaluate(async () => {
+    const jpeg = await e2ePhoto.withOrientation6(await e2ePhoto.halves(1200, 800, 'image/jpeg'))
+    return [...new Uint8Array(await jpeg.arrayBuffer())]
+  })
+  return { name, mimeType: 'image/jpeg', buffer: Buffer.from(bytes) }
+}

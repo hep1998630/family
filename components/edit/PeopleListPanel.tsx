@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import Avatar from '@/components/ui/Avatar'
 import type { PersonRow, ParentChildRow } from '@/lib/supabase/types'
+import { matchesArabic, normalizeArabic } from '@/lib/search/arabic'
 
 interface NamedPerson extends PersonRow {
   root_name?: string
@@ -27,10 +28,17 @@ export default function PeopleListPanel({
   const [search, setSearch] = useState('')
   const [confirmId, setConfirmId] = useState<string | null>(null)
 
-  const parentIds = useMemo(
-    () => new Set(parentChildRows.map(pc => pc.parent_id)),
-    [parentChildRows]
-  )
+  // Everyone with children — by a parent link, or (older rows) only by a
+  // child's mother_id; children of their shortcut rows in other branches
+  // count too. They can't be deleted (the database refuses it as well).
+  const parentIds = useMemo(() => {
+    const byId = new Map(people.map(p => [p.id, p]))
+    const ids = [
+      ...parentChildRows.map(pc => pc.parent_id),
+      ...people.flatMap(p => (p.mother_id ? [p.mother_id] : [])),
+    ]
+    return new Set(ids.map(id => byId.get(id)?.original_person_id ?? id))
+  }, [parentChildRows, people])
 
   const realPeople = useMemo(
     () => people.filter(p => !p.is_shortcut),
@@ -38,13 +46,8 @@ export default function PeopleListPanel({
   )
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return realPeople
-    return realPeople.filter(
-      p =>
-        p.name.toLowerCase().includes(q) ||
-        (p.nickname?.toLowerCase().includes(q) ?? false)
-    )
+    if (!normalizeArabic(search)) return realPeople
+    return realPeople.filter(p => matchesArabic(p.name, search) || matchesArabic(p.nickname, search))
   }, [realPeople, search])
 
   // ── Toggle button (inline in the top bar) + overlay panel ────
