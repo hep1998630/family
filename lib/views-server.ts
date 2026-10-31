@@ -3,6 +3,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, SavedViewRow } from '@/lib/supabase/types'
 import { sortViews } from '@/lib/views'
+import { readAll } from '@/lib/supabase/readAll'
 
 /**
  * All saved views, in display order. Never throws: if the table can't be
@@ -11,7 +12,7 @@ import { sortViews } from '@/lib/views'
  */
 export async function loadSavedViews(supabase: SupabaseClient<Database>): Promise<SavedViewRow[]> {
   try {
-    const { data, error } = await supabase.from('saved_views').select('*')
+    const { data, error } = await readAll(supabase, 'saved_views')
     if (error) {
       console.error('[saved_views] could not load — has migration 005 been run?', error.message)
       return []

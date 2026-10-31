@@ -3,6 +3,8 @@
 import http from 'node:http'
 
 export const TOKEN = 'mock-access-token'
+/** Like the Supabase API's "max rows": no request returns more. */
+export const MAX_ROWS = 1000
 export const PNG_1PX = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
 export const USER = { id: '00000000-0000-4000-8000-0000000000aa', email: 'owner@example.com', aud: 'authenticated', role: 'authenticated' }
@@ -142,6 +144,29 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [],
     }
 
     // ── RPC: the role checks from 003_add_auth_roles.sql ──
+    // ── RPC: delete_person (007) — all or nothing, like the real function ──
+    if (url.pathname === '/rest/v1/rpc/delete_person') {
+      log.push({ table: 'rpc', method: 'delete_person', body: raw.toString() })
+      const fi = failures.findIndex(f => f.table === 'rpc' && f.method === 'delete_person')
+      if (fi !== -1) {
+        failures.splice(fi, 1)
+        return send(res, 500, { message: 'injected delete_person failure', code: 'XX000' })
+      }
+      const signedIn = (req.headers.authorization ?? '') === `Bearer ${TOKEN}`
+      const me = signedIn ? db.admins.find(a => a.id === USER.id) : null
+      const { p_id: id } = JSON.parse(raw.toString() || '{}')
+      if (!db.people.some(p => p.id === id)) return send(res, 204)
+      if (me?.role !== 'owner') return send(res, 403, { message: 'only the owner can delete people', code: '42501' })
+      const ids = db.people.filter(p => p.id === id || p.original_person_id === id).map(p => p.id)
+      if (db.parent_child.some(r => ids.includes(r.parent_id)) || db.people.some(p => ids.includes(p.mother_id) && !ids.includes(p.id))) {
+        return send(res, 400, { message: 'this person still has children — remove or move them first', code: '23503' })
+      }
+      db.partnerships = db.partnerships.filter(r => !ids.includes(r.person_a_id) && !ids.includes(r.person_b_id))
+      db.parent_child = db.parent_child.filter(r => !ids.includes(r.child_id))
+      db.people = db.people.filter(p => !ids.includes(p.id))
+      return send(res, 204)
+    }
+
     const rpc = url.pathname.match(/^\/rest\/v1\/rpc\/(is_owner|is_admin)$/)
     if (rpc) {
       const signedIn = (req.headers.authorization ?? '') === `Bearer ${TOKEN}`
@@ -178,9 +203,21 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [],
     let status = 200, body
     if (req.method === 'GET' || req.method === 'HEAD') {
       let rows = db[table].filter(match)
-      const order = url.searchParams.get('order')
-      if (order) { const [col, dir] = order.split('.'); rows = [...rows].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : 1) * (dir === 'desc' ? -1 : 1)) }
-      const limit = url.searchParams.get('limit'); if (limit) rows = rows.slice(0, Number(limit))
+      // order=a.asc,b.desc — several keys, like PostgREST.
+      const keys = (url.searchParams.get('order') ?? '').split(',').filter(Boolean).map(k => k.split('.'))
+      if (keys.length) {
+        rows = [...rows].sort((a, b) => {
+          for (const [col, dir] of keys) {
+            const x = String(a[col]), y = String(b[col])
+            if (x !== y) return (x < y ? -1 : 1) * (dir === 'desc' ? -1 : 1)
+          }
+          return 0
+        })
+      }
+      // offset/limit (what .range() sends), and the API's 1000-row cap.
+      const offset = Number(url.searchParams.get('offset') ?? 0)
+      const limit = Math.min(Number(url.searchParams.get('limit') ?? MAX_ROWS), MAX_ROWS)
+      rows = rows.slice(offset, offset + limit)
       if (accept.includes('vnd.pgrst.object')) {
         if (rows.length !== 1) return send(res, 406, { message: 'JSON object requested, multiple (or no) rows returned', code: 'PGRST116' })
         body = rows[0]

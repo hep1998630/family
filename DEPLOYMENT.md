@@ -24,8 +24,10 @@ Supabase dashboard → **SQL Editor** → open each file in
 5. `005_saved_views.sql` — the admins' saved tree views («عروض مختارة»)
 6. `006_editors_can_relink.sql` — lets editors correct a parent or remove
    a marriage (deleting people stays owner-only)
+7. `007_delete_person.sql` — deletes a person and their links in one step,
+   so a failed delete can never leave a person half-deleted
 
-All six must be run, in order — each depends on the schema the previous
+All seven must be run, in order — each depends on the schema the previous
 one created. **004 is not optional**: since 2026-05-30, new Supabase
 projects no longer auto-grant table access to the API, so without it every
 request from the app fails with a permission error that looks exactly
@@ -39,6 +41,9 @@ feature: until it's run, the site still loads but shows no saved views
 Without `006_editors_can_relink.sql`, an editor who changes a child's
 father/mother or removes a marriage gets «لم يتم الحفظ: ليس لديك صلاحية
 لهذا التعديل» — nothing is corrupted, but the change can't be saved.
+Without `007_delete_person.sql`, deleting a person fails with an error
+(«تعذّر حفظ بعض التغييرات») — run it before publishing the version that
+needs it.
 
 Before giving anyone else access, also do the one-time dashboard settings
 in [SETUP.md](./SETUP.md#one-time-dashboard-settings-do-these-before-giving-anyone-access)
