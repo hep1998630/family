@@ -23,7 +23,10 @@ import { usePartnerships } from '@/hooks/usePartnerships'
 import { useParentChild } from '@/hooks/useParentChild'
 import { useEditDraft } from '@/hooks/useEditDraft'
 import { useSavedViews, type SavedViewInput } from '@/hooks/useSavedViews'
-import { computeLayout, computeDepthFromRoot, computeViewLayout, findRootPerson } from '@/lib/tree/layout'
+import {
+  computeLayout, computeDepthFromRoot, computeViewLayout, findRootPerson,
+  NODE_HEIGHT, SHOW_MORE_GAP, SHOW_MORE_HEIGHT,
+} from '@/lib/tree/layout'
 import { buildLineage, closeFamilyIds, partnersOf } from '@/lib/tree/lineage'
 import { childRootId, planParentLinks } from '@/lib/tree/parentLinks'
 import type { PersonRow, PartnershipRow, ParentChildRow, RootRow, SavedViewRow } from '@/lib/supabase/types'
@@ -63,7 +66,46 @@ type ModalState =
   | { type: 'addRoot' }
   | { type: 'removePartner'; partnershipId: string; names: string }
 
-export default function TreeApp({
+/** The public view page's data: the database itself, kept up to date live. */
+function useLiveData(props: TreeAppProps) {
+  const liveRoots = useRoots(props.initialRoots)
+  const livePeople = usePeople(props.initialPeople)
+  const livePartnerships = usePartnerships(props.initialPartnerships)
+  const liveParentChild = useParentChild(props.initialParentChild)
+  return {
+    roots: liveRoots.roots,
+    people: livePeople.people,
+    partnerships: livePartnerships.partnerships,
+    parentChildRows: liveParentChild.parentChildRows,
+    addRoot: liveRoots.addRoot,
+    addPerson: livePeople.addPerson,
+    addPartnership: livePartnerships.addPartnership,
+    removePartnership: livePartnerships.removePartnership,
+    addParentChild: liveParentChild.addParentChild,
+    removeParentChild: liveParentChild.removeParentChild,
+    updatePerson: livePeople.updatePerson,
+    deletePerson: livePeople.deletePerson,
+    uploadPhoto: livePeople.uploadPhoto,
+  }
+}
+
+/**
+ * The edit page works on a local draft and never mounts the live hooks:
+ * their realtime channels keep checking — and refreshing — the login
+ * session in the browser, racing the server's own refresh. Only the view
+ * page uses them. (A page never switches between the two, so each is its
+ * own component and the hooks stay unconditional.)
+ */
+export default function TreeApp(props: TreeAppProps) {
+  return props.isEditable ? <TreeAppMain {...props} live={null} /> : <LiveTreeApp {...props} />
+}
+
+function LiveTreeApp(props: TreeAppProps) {
+  const live = useLiveData(props)
+  return <TreeAppMain {...props} live={live} />
+}
+
+function TreeAppMain({
   isEditable,
   isOwner = false,
   adminName,
@@ -75,30 +117,26 @@ export default function TreeApp({
   initialFocusId = null,
   initialSavedViews = [],
   initialViewId = null,
-}: TreeAppProps) {
+  live,
+}: TreeAppProps & { live: ReturnType<typeof useLiveData> | null }) {
   const router = useRouter()
   const pathname = usePathname()
 
-  // ── Data hooks — all called unconditionally (rules of hooks) ─
-  const liveRoots = useRoots(initialRoots)
-  const livePeople = usePeople(initialPeople)
-  const livePartnerships = usePartnerships(initialPartnerships)
-  const liveParentChild = useParentChild(initialParentChild)
   const draft = useEditDraft(initialRoots, initialPeople, initialPartnerships, initialParentChild)
 
-  const roots           = isEditable ? draft.roots           : liveRoots.roots
-  const people          = isEditable ? draft.people          : livePeople.people
-  const partnerships    = isEditable ? draft.partnerships    : livePartnerships.partnerships
-  const parentChildRows = isEditable ? draft.parentChildRows : liveParentChild.parentChildRows
-  const addRoot            = isEditable ? draft.addRoot            : liveRoots.addRoot
-  const addPerson          = isEditable ? draft.addPerson          : livePeople.addPerson
-  const addPartnership     = isEditable ? draft.addPartnership     : livePartnerships.addPartnership
-  const removePartnership  = isEditable ? draft.removePartnership  : livePartnerships.removePartnership
-  const addParentChild     = isEditable ? draft.addParentChild     : liveParentChild.addParentChild
-  const removeParentChild  = isEditable ? draft.removeParentChild  : liveParentChild.removeParentChild
-  const updatePerson    = isEditable ? draft.updatePerson    : livePeople.updatePerson
-  const deletePerson    = isEditable ? draft.deletePerson    : livePeople.deletePerson
-  const uploadPhoto     = isEditable ? draft.uploadPhoto     : livePeople.uploadPhoto
+  const roots           = live ? live.roots           : draft.roots
+  const people          = live ? live.people          : draft.people
+  const partnerships    = live ? live.partnerships    : draft.partnerships
+  const parentChildRows = live ? live.parentChildRows : draft.parentChildRows
+  const addRoot            = live ? live.addRoot            : draft.addRoot
+  const addPerson          = live ? live.addPerson          : draft.addPerson
+  const addPartnership     = live ? live.addPartnership     : draft.addPartnership
+  const removePartnership  = live ? live.removePartnership  : draft.removePartnership
+  const addParentChild     = live ? live.addParentChild     : draft.addParentChild
+  const removeParentChild  = live ? live.removeParentChild  : draft.removeParentChild
+  const updatePerson    = live ? live.updatePerson    : draft.updatePerson
+  const deletePerson    = live ? live.deletePerson    : draft.deletePerson
+  const uploadPhoto     = live ? live.uploadPhoto     : draft.uploadPhoto
 
   // ── Lookup maps ───────────────────────────────────────────────
   const peopleById = useMemo(() => new Map(people.map(p => [p.id, p])), [people])
@@ -143,7 +181,7 @@ export default function TreeApp({
   const navigateToPerson = useCallback((personId: string) => {
     const person = peopleById.get(personId)
     if (!person) return
-    const neededDepth = computeDepthFromRoot(personId, parentChildRows) + 1
+    const neededDepth = computeDepthFromRoot(personId, people, parentChildRows) + 1
     setMaxDepth(Math.max(DEFAULT_MAX_DEPTH, neededDepth))
     if (viewModeRef.current === 'views') {
       // Searching or following a link from a saved view opens the full tree / family view.
@@ -156,7 +194,7 @@ export default function TreeApp({
     }
     setPendingFocusId(personId)
     focusFamilyRef.current(personId)
-  }, [peopleById, parentChildRows, setSelectedRootId])
+  }, [peopleById, people, parentChildRows, setSelectedRootId])
 
   // A family created in this session has a temp id until Save writes it;
   // resolve through the draft so the branch stays open after saving.
@@ -285,17 +323,33 @@ export default function TreeApp({
     // The family view moved its focus already (navigateToPerson).
     if (viewMode === 'family') { setPendingFocusId(null); return }
     const el = document.getElementById(`person-${pendingFocusId}`)
-    if (!el) return // not mounted yet — effect re-runs when layoutedRoot updates
+    if (!el) {
+      // Their branch is laid out but they aren't drawn in it (e.g. only as a
+      // reference), or they no longer exist: give up, so the tree can't
+      // jump to them later out of nowhere.
+      const target = peopleById.get(pendingFocusId)
+      if (!target || (layoutedRoot && layoutedRoot.root.id === target.root_id
+        && !layoutedRoot.allNodes.some(n => n.person.id === pendingFocusId && !n.isReference))) {
+        setPendingFocusId(null)
+      }
+      return // otherwise not mounted yet — the effect re-runs when layoutedRoot updates
+    }
     el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
     const focusedId = pendingFocusId
-    const t = setTimeout(() => {
+    // Not cancelled by this effect's cleanup: clearing pendingFocusId just
+    // below re-runs the effect, which used to cancel the highlight before
+    // it ever showed.
+    highlightTimerRef.current = setTimeout(() => {
       setHighlightedPersonId(focusedId)
       highlightTimerRef.current = setTimeout(() => setHighlightedPersonId(null), 2000)
     }, 400)
     setPendingFocusId(null)
-    return () => clearTimeout(t)
-  }, [pendingFocusId, layoutedRoot, viewMode])
+  }, [pendingFocusId, layoutedRoot, viewMode, peopleById])
+
+  useEffect(() => () => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
+  }, [])
 
   // ── UI state ──────────────────────────────────────────────────
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null)
@@ -508,7 +562,8 @@ export default function TreeApp({
 
   const treeSize = layoutedRoot ? {
     width: Math.max(...layoutedRoot.allNodes.map(n => n.x + 160)) + 100,
-    height: Math.max(...layoutedRoot.allNodes.map(n => n.y + 80)) + 180,
+    // Room below the lowest node for a «عرض أجيال إضافية» button, and a margin.
+    height: Math.max(...layoutedRoot.allNodes.map(n => n.y + NODE_HEIGHT + SHOW_MORE_GAP + SHOW_MORE_HEIGHT)) + 40,
   } : null
 
   return (

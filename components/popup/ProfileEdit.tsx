@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Avatar from '@/components/ui/Avatar'
 import Button from '@/components/ui/Button'
-import { Input, Textarea } from '@/components/ui/Input'
+import { Input, Select, Textarea } from '@/components/ui/Input'
 import type { PersonRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
 import { partnersOf, type Lineage } from '@/lib/tree/lineage'
@@ -217,14 +217,15 @@ export default function ProfileEdit({
 
         {/* Gender */}
         <div className="flex flex-col gap-1.5">
-          <label className="font-sans text-base font-semibold text-charcoal">
+          <p id="profile-gender-label" className="font-sans text-base font-semibold text-charcoal">
             الجنس
-          </label>
-          <div className="flex gap-3">
+          </p>
+          <div role="group" aria-labelledby="profile-gender-label" className="flex gap-3">
             {(['male', 'female'] as const).map(g => (
               <button
                 key={g}
                 type="button"
+                aria-pressed={values.gender === g}
                 onClick={() => set('gender', values.gender === g ? '' : g)}
                 className={`
                   flex-1 py-4 px-3 rounded-xl font-sans text-base font-semibold
@@ -334,26 +335,13 @@ function ParentSelect({
   onChange: (id: string | null) => void
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <label className="font-sans text-base font-semibold text-charcoal">{label}</label>
-      <select
-        value={value ?? ''}
-        onChange={e => onChange(e.target.value || null)}
-        className="
-          w-full px-4 py-3.5 rounded-xl
-          font-sans text-lg text-charcoal
-          bg-white border-2 border-slate-300
-          focus:outline-none focus:border-walnut focus:ring-2 focus:ring-walnut/20
-          transition-colors duration-150
-        "
-      >
-        <option value="">— غير محدد —</option>
-        {options.map(p => (
-          <option key={p.id} value={p.id}>
-            {labelFor(p)}{p.nickname ? ` (${p.nickname})` : ''}
-          </option>
-        ))}
-      </select>
-    </div>
+    <Select label={label} value={value ?? ''} onChange={e => onChange(e.target.value || null)}>
+      <option value="">— غير محدد —</option>
+      {options.map(p => (
+        <option key={p.id} value={p.id}>
+          {labelFor(p)}{p.nickname ? ` (${p.nickname})` : ''}
+        </option>
+      ))}
+    </Select>
   )
 }

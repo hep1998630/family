@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import Avatar from '@/components/ui/Avatar'
 import type { PersonRow, ParentChildRow } from '@/lib/supabase/types'
+import { matchesArabic, normalizeArabic } from '@/lib/search/arabic'
 
 interface NamedPerson extends PersonRow {
   root_name?: string
@@ -45,13 +46,8 @@ export default function PeopleListPanel({
   )
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return realPeople
-    return realPeople.filter(
-      p =>
-        p.name.toLowerCase().includes(q) ||
-        (p.nickname?.toLowerCase().includes(q) ?? false)
-    )
+    if (!normalizeArabic(search)) return realPeople
+    return realPeople.filter(p => matchesArabic(p.name, search) || matchesArabic(p.nickname, search))
   }, [realPeople, search])
 
   // ── Toggle button (inline in the top bar) + overlay panel ────
