@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Avatar from '@/components/ui/Avatar'
+import { findArabic, matchesArabic, normalizeArabic } from '@/lib/search/arabic'
 
 interface SearchablePerson {
   id: string
@@ -29,19 +30,16 @@ export default function SearchBar({ people, onSelectPerson, className = '' }: Se
 
   // ── Search logic ─────────────────────────────────────────────
   useEffect(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) {
+    const q = query.trim()
+    if (!normalizeArabic(q)) {
       setResults([])
       setIsOpen(false)
       setActiveIdx(-1)
       return
     }
 
-    const matched = people.filter(p => {
-      const nameMatch = p.name.toLowerCase().includes(q)
-      const nicknameMatch = p.nickname?.toLowerCase().includes(q) ?? false
-      return nameMatch || nicknameMatch
-    }).slice(0, 8)
+    // «احمد» finds «أحمد», «فاطمه» «فاطمة», «مصطفي» «مصطفى» (lib/search/arabic.ts).
+    const matched = people.filter(p => matchesArabic(p.name, q) || matchesArabic(p.nickname, q)).slice(0, 8)
 
     setResults(matched)
     setIsOpen(matched.length > 0)
@@ -94,16 +92,16 @@ export default function SearchBar({ people, onSelectPerson, className = '' }: Se
 
   // ── Highlight matching text ──────────────────────────────────
   const highlight = (text: string, q: string) => {
-    if (!q.trim()) return <>{text}</>
-    const idx = text.toLowerCase().indexOf(q.toLowerCase())
-    if (idx === -1) return <>{text}</>
+    const match = findArabic(text, q)
+    if (!match) return <>{text}</>
+    const [start, end] = match
     return (
       <>
-        {text.slice(0, idx)}
+        {text.slice(0, start)}
         <mark className="bg-gold/40 text-charcoal rounded px-0.5 not-italic">
-          {text.slice(idx, idx + q.length)}
+          {text.slice(start, end)}
         </mark>
-        {text.slice(idx + q.length)}
+        {text.slice(end)}
       </>
     )
   }

@@ -5,7 +5,7 @@ import ShortcutNode from '@/components/nodes/ShortcutNode'
 import ReferenceNode from '@/components/nodes/ReferenceNode'
 import ConnectorLines from '@/components/tree/ConnectorLines'
 import ShowMoreButton from '@/components/tree/ShowMoreButton'
-import { NODE_HEIGHT } from '@/lib/tree/layout'
+import { NODE_HEIGHT, SHOW_MORE_GAP, SHOW_MORE_HEIGHT } from '@/lib/tree/layout'
 import type { LayoutedRoot } from '@/types'
 import type { PersonRow } from '@/lib/supabase/types'
 
@@ -51,7 +51,7 @@ export default function FamilyRoot({
   // node — kept generous and unconditional so it matches the scroll
   // container's own bounding-box calc in TreeApp exactly.
   const maxX = Math.max(...allNodes.map(n => n.x + 160)) + 100
-  const maxY = Math.max(...allNodes.map(n => n.y + 80)) + 180
+  const maxY = Math.max(...allNodes.map(n => n.y + NODE_HEIGHT + SHOW_MORE_GAP + SHOW_MORE_HEIGHT)) + 40
 
   return (
     <>
@@ -134,7 +134,7 @@ export default function FamilyRoot({
         <ShowMoreButton
           key={`more-${n.person.id}`}
           x={n.x}
-          y={n.y + NODE_HEIGHT + 16}
+          y={n.y + NODE_HEIGHT + SHOW_MORE_GAP}
           onClick={onExpand}
         />
       ))}

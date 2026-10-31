@@ -4,9 +4,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import Avatar from '@/components/ui/Avatar'
-import { Input, Textarea, FieldWrapper } from '@/components/ui/Input'
+import { Input, Select, Textarea } from '@/components/ui/Input'
 import type { PersonRow, RootRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
+import { matchesArabic, normalizeArabic } from '@/lib/search/arabic'
 
 type AddPersonMode = 'partner' | 'child'
 
@@ -147,12 +148,8 @@ export default function AddPersonModal({
   const hiddenWithoutGender = candidates.filter(p => !p.gender).length
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return eligible
-    return eligible.filter(p =>
-      labelFor(p).toLowerCase().includes(q) ||
-      (p.nickname?.toLowerCase().includes(q) ?? false)
-    )
+    if (!normalizeArabic(search)) return eligible
+    return eligible.filter(p => matchesArabic(labelFor(p), search) || matchesArabic(p.nickname, search))
   }, [eligible, search, labelFor])
 
   // ── Child mode ──────────────────────────────────────────────
@@ -170,23 +167,18 @@ export default function AddPersonModal({
           <div className="h-0.5 bg-slate-200" />
           <div className="flex flex-col gap-4">
             {otherParent && (
-              <FieldWrapper label={roleLabel} required error={parentError}>
-                <select
-                  value={values[parentKey] ?? ''}
-                  onChange={e => set(parentKey, e.target.value || null)}
-                  className="
-                    w-full px-4 py-3.5 rounded-xl
-                    font-sans text-lg text-charcoal
-                    bg-white border-2 border-slate-300
-                    focus:outline-none focus:border-walnut focus:ring-2 focus:ring-walnut/20
-                  "
-                >
-                  {otherParent.options.length > 1 && <option value="">— اختر {roleLabel} —</option>}
-                  {otherParent.options.map(p => (
-                    <option key={p.id} value={p.id}>{labelFor(p)}</option>
-                  ))}
-                </select>
-              </FieldWrapper>
+              <Select
+                label={roleLabel}
+                required
+                error={parentError}
+                value={values[parentKey] ?? ''}
+                onChange={e => set(parentKey, e.target.value || null)}
+              >
+                {otherParent.options.length > 1 && <option value="">— اختر {roleLabel} —</option>}
+                {otherParent.options.map(p => (
+                  <option key={p.id} value={p.id}>{labelFor(p)}</option>
+                ))}
+              </Select>
             )}
             <Input
               label="الاسم" required

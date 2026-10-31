@@ -1,6 +1,6 @@
 'use client'
 
-import { NODE_WIDTH } from '@/lib/tree/layout'
+import { NODE_WIDTH, SHOW_MORE_HEIGHT } from '@/lib/tree/layout'
 
 interface ShowMoreButtonProps {
   x: number
@@ -13,10 +13,10 @@ export default function ShowMoreButton({ x, y, onClick }: ShowMoreButtonProps) {
   return (
     <button
       onClick={onClick}
-      style={{ left: x, top: y, width: NODE_WIDTH }}
+      style={{ left: x, top: y, width: NODE_WIDTH, height: SHOW_MORE_HEIGHT }}
       className="
         absolute flex flex-col items-center justify-center gap-1.5
-        py-5 rounded-2xl
+        rounded-2xl
         bg-white border-2 border-dashed border-walnut/40
         text-walnut hover:border-walnut hover:bg-parchment
         font-sans text-xs font-bold text-center
