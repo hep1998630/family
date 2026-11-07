@@ -2,6 +2,7 @@ import { createPublicClient } from '@/lib/supabase/server'
 import TreeApp from '@/components/branch/TreeApp'
 import { readAll } from '@/lib/supabase/readAll'
 import { loadSavedViews } from '@/lib/views-server'
+import { getSiteSettings } from '@/lib/settings/getSiteSettings'
 
 export default async function ViewPage({
   searchParams,
@@ -22,6 +23,7 @@ export default async function ViewPage({
     { data: partnerships },
     { data: parentChild },
     savedViews,
+    site,
   ] = await Promise.all([
     // Page by page (the API stops at 1000 rows), in a fixed order: the
     // database otherwise returns rows in whatever order they're stored,
@@ -31,6 +33,7 @@ export default async function ViewPage({
     readAll(supabase, 'partnerships'),
     readAll(supabase, 'parent_child'),
     loadSavedViews(supabase),
+    getSiteSettings(),
   ])
 
   return (
@@ -44,6 +47,8 @@ export default async function ViewPage({
       initialFocusId={focus ?? null}
       initialSavedViews={savedViews}
       initialViewId={view ?? null}
+      // Never the other family's link: the public page doesn't show it.
+      familyName={site.familyName}
     />
   )
 }

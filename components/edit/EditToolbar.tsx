@@ -5,12 +5,19 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useFamilyExport } from '@/components/edit/FamilyExport'
 import { PERMISSION_DENIED } from '@/lib/supabase/writes'
+import SiteSettingsModal from '@/components/edit/SiteSettingsModal'
+import { DEFAULT_FAMILY_NAME } from '@/lib/settings/siteSettings'
 
 interface EditToolbarProps {
     hasPendingChanges: boolean
     isSaving: boolean
     onSave: () => void
     adminName?: string
+    /** Only the owner sees «إعدادات الموقع». */
+    isOwner?: boolean
+    familyName?: string
+    /** The other family's site, if set — linked for admins (never on the public page). */
+    otherSiteUrl?: string | null
 }
 
 /** Save button + account menu, laid out inline inside the top bar. */
@@ -19,10 +26,19 @@ export default function EditToolbar({
     isSaving,
     onSave,
     adminName,
+    isOwner = false,
+    familyName = DEFAULT_FAMILY_NAME,
+    otherSiteUrl = null,
 }: EditToolbarProps) {
     return (
         <>
-            <AccountMenu adminName={adminName || 'المدير'} hasPendingChanges={hasPendingChanges} />
+            <AccountMenu
+                adminName={adminName || 'المدير'}
+                hasPendingChanges={hasPendingChanges}
+                isOwner={isOwner}
+                familyName={familyName}
+                otherSiteUrl={otherSiteUrl}
+            />
             <button
                 onClick={onSave}
                 disabled={isSaving || !hasPendingChanges}
@@ -113,9 +129,16 @@ export function SaveErrorBanner({ saveError, failedDeleteName, onUndoDelete }: {
     )
 }
 
-function AccountMenu({ adminName, hasPendingChanges }: { adminName: string; hasPendingChanges: boolean }) {
+function AccountMenu({ adminName, hasPendingChanges, isOwner, familyName, otherSiteUrl }: {
+    adminName: string
+    hasPendingChanges: boolean
+    isOwner: boolean
+    familyName: string
+    otherSiteUrl: string | null
+}) {
     const router = useRouter()
     const [open, setOpen] = useState(false)
+    const [settingsOpen, setSettingsOpen] = useState(false)
     // Logging out drops the unsaved draft — ask first.
     const [confirmingLogout, setConfirmingLogout] = useState(false)
     // Lives here, not in the dropdown, so progress survives the menu closing.
@@ -170,6 +193,24 @@ function AccountMenu({ adminName, hasPendingChanges }: { adminName: string; hasP
                     <p className="font-sans text-sm text-walnut-light">
                         مسجل الدخول: <span className="font-semibold text-charcoal name-text">{adminName}</span>
                     </p>
+                    {otherSiteUrl && (
+                        <a
+                            href={otherSiteUrl}
+                            target="_blank"
+                            rel="noopener"
+                            className="min-h-12 flex items-center justify-center rounded-xl border-2 border-slate-200 font-sans text-base font-semibold text-walnut hover:border-walnut"
+                        >
+                            فتح الشجرة الأخرى ↗
+                        </a>
+                    )}
+                    {isOwner && (
+                        <button
+                            onClick={() => { setOpen(false); setSettingsOpen(true) }}
+                            className="min-h-12 rounded-xl border-2 border-walnut/30 font-sans text-base font-bold text-walnut hover:border-walnut"
+                        >
+                            إعدادات الموقع
+                        </button>
+                    )}
                     {familyExport.button}
                     {confirmingLogout ? (
                         <div role="alert" className="flex flex-col gap-2">
@@ -200,6 +241,14 @@ function AccountMenu({ adminName, hasPendingChanges }: { adminName: string; hasP
                 </div>
             )}
             {familyExport.panel}
+            {settingsOpen && (
+                <SiteSettingsModal
+                    isOpen
+                    onClose={() => setSettingsOpen(false)}
+                    familyName={familyName}
+                    otherSiteUrl={otherSiteUrl}
+                />
+            )}
         </div>
     )
 }

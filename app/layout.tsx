@@ -1,9 +1,16 @@
 import type { Metadata, Viewport } from 'next'
+import { getSiteSettings } from '@/lib/settings/getSiteSettings'
 import './globals.css'
 
-export const metadata: Metadata = {
-  title: 'شجرة العائلة',
-  description: 'استكشف تاريخ عائلتك واحفظه',
+// The family's own name (site_settings, migration 008), so each family's
+// site shows its own title — «شجرة العائلة» until it's set.
+export async function generateMetadata(): Promise<Metadata> {
+  const { familyName } = await getSiteSettings()
+  return {
+    title: familyName,
+    description: 'استكشف تاريخ عائلتك واحفظه',
+    appleWebApp: { title: familyName },
+  }
 }
 
 // Next 15 ignores `metadata.viewport`; it has to be its own export.

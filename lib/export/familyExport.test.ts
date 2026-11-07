@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parse } from 'gedcom'
-import { buildFamilyExport, buildGedcom, buildReadme, gedcomDate, photoPath, photoTargets, type FamilyData, type PhotoResult } from './familyExport'
+import { buildFamilyExport, buildGedcom, buildReadme, exportFileName, gedcomDate, photoPath, photoTargets, type FamilyData, type PhotoResult } from './familyExport'
 import type { PersonRow } from '@/lib/supabase/types'
 
 const t = '2026-01-01T00:00:00+00:00'
@@ -238,5 +238,27 @@ describe('README.txt', () => {
     expect(readme).toContain('Gramps')
     expect(readme).toContain('تعذّر تنزيل 1 صورة')
     expect(readme).toContain('https://cdn.example/avatars/yusuf.png')
+  })
+})
+
+describe('the site’s settings (migration 008) in the export', () => {
+  it('family.json carries site_settings — the defaults when not set', () => {
+    expect(exp.site_settings).toEqual({ family_name: 'شجرة العائلة', other_site_url: null })
+  })
+
+  it('a named family: in family.json, GEDCOM and the README', () => {
+    const named = buildFamilyExport({ ...data, site: { familyName: 'عائلة الأم', otherSiteUrl: 'https://a.example.app' } }, photos, new Date('2026-10-17T10:00:00Z'))
+    expect(named.site_settings).toEqual({ family_name: 'عائلة الأم', other_site_url: 'https://a.example.app' })
+    const ged = buildGedcom(named)
+    expect(ged).toContain('2 NAME عائلة الأم')
+    expect(ged).toContain('1 NAME عائلة الأم')
+    expect(buildReadme(named).split('\n')[0]).toBe('تصدير عائلة الأم — 2026-10-17')
+  })
+
+  it('the zip is named after the family (safe for any file system)', () => {
+    const d = new Date(2026, 9, 7)
+    expect(exportFileName('شجرة العائلة', d)).toBe('family-export-2026-10-07.zip')
+    expect(exportFileName('عائلة الأم', d)).toBe('عائلة الأم-2026-10-07.zip')
+    expect(exportFileName('آل "حسن" / القاهرة', d)).toBe('آل حسن القاهرة-2026-10-07.zip')
   })
 })

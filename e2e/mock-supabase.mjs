@@ -24,6 +24,8 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [],
     partnerships: seed.partnerships ?? [],
     parent_child: seed.parent_child ?? [],
     saved_views: seed.saved_views ?? [],
+    // 008: one row; `seed.site_settings` replaces it.
+    site_settings: seed.site_settings ?? [{ id: 1, family_name: 'شجرة العائلة', other_site_url: null, updated_at: new Date().toISOString() }],
     admins: seed.admins ?? [{ id: USER.id, role: 'owner', name: 'المالك', created_at: new Date().toISOString() }],
   }
   const UNIQUE = {
@@ -31,6 +33,7 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [],
     partnerships: [['id'], ['person_a_id', 'person_b_id']],
     parent_child: [['id'], ['parent_id', 'child_id']],
     saved_views: [['id']],
+    site_settings: [['id']],
   }
   // storage: "bucket/path" → { body, type }
   const files = new Map(Object.entries(seed.files ?? {}))
@@ -97,6 +100,12 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [],
     // ── control endpoints for the test driver ──
     if (url.pathname === '/__mock/state') return send(res, 200, { db, log, files: [...files.keys()] })
     if (url.pathname === '/__mock/fail') { failures.push(JSON.parse(raw.toString())); return send(res, 200, { ok: true }) }
+    // POST [table, method] starts refusing that write (like RLS); DELETE stops all.
+    if (url.pathname === '/__mock/refuse') {
+      if (req.method === 'DELETE') refuse.length = 0
+      else refuse.push(JSON.parse(raw.toString()))
+      return send(res, 200, { ok: true })
+    }
 
     // ── auth ──
     if (url.pathname === '/auth/v1/user') {
@@ -235,7 +244,11 @@ export function startMockSupabase({ port = 54321, seed = {}, missingTables = [],
       body = prefer.includes('return=representation') ? (accept.includes('vnd.pgrst.object') ? inserted[0] : inserted) : undefined
     } else if (req.method === 'PATCH') {
       const patch = JSON.parse(raw.toString() || '{}')
-      const rows = refused(table, 'PATCH') ? [] : db[table].filter(match)
+      // Like 008's RLS: only the owner may update site_settings — anyone
+      // else's update "succeeds" with 0 rows.
+      const ownerOnly = table === 'site_settings'
+        && db.admins.find(a => a.id === USER.id && (req.headers.authorization ?? '') === `Bearer ${TOKEN}`)?.role !== 'owner'
+      const rows = refused(table, 'PATCH') || ownerOnly ? [] : db[table].filter(match)
       rows.forEach(r => Object.assign(r, patch))
       log.push({ table, method: 'PATCH', patch, count: rows.length })
       status = prefer.includes('return=representation') ? 200 : 204

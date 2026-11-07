@@ -196,6 +196,27 @@ export type Database = {
         }
         Relationships: []
       }
+      // From 008_site_settings.sql — one row (id = 1).
+      site_settings: {
+        Row: {
+          id: number
+          family_name: string
+          other_site_url: string | null
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          family_name?: string
+          other_site_url?: string | null
+          updated_at?: string
+        }
+        Update: {
+          family_name?: string
+          other_site_url?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       people_with_root: {
