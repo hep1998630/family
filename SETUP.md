@@ -2,8 +2,10 @@
 
 ## Applying migrations on a new Supabase project
 
-Run `supabase/migrations/001_initial_schema.sql` through `007_delete_person.sql`
+Run `supabase/migrations/001_initial_schema.sql` through `008_site_settings.sql`
 **in order** — each one depends on the schema the previous one created.
+**With two family sites, run every migration in both Supabase projects**
+(see «إضافة شجرة عائلة ثانية» in [DEPLOYMENT.md](./DEPLOYMENT.md)).
 This matters more than it used to: since 2026-05-30, new Supabase projects
 no longer auto-grant table access to the `anon`/`authenticated` roles by
 default, so `004_grant_data_api_access.sql` is not optional on a project
@@ -24,8 +26,11 @@ These live in the Supabase dashboard, not in the code or the migrations:
    account through the public API. Such an account gets no edit rights (it
    isn't in `admins`), but it's junk you'd have to clean up.
 2. **Set the site address.** **Authentication → URL Configuration → Site
-   URL** = `https://al-mustafa-family.netlify.app`. Otherwise any link in an
-   auth email (invite, password reset) points at `localhost`.
+   URL** = `https://al-mustafa-family.netlify.app` (for a second family's
+   site: that site's own address). Otherwise any link in an auth email
+   (invite, password reset) points at `localhost`.
+3. **Name the family.** Sign in → account menu → **«إعدادات الموقع»** →
+   «اسم العائلة». Only the owner sees this button.
 
 ## إضافة محرر جديد — Adding an editor
 

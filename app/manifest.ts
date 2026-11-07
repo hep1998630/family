@@ -1,9 +1,15 @@
 import type { MetadataRoute } from 'next'
+import { getSiteSettings } from '@/lib/settings/getSiteSettings'
 
-export default function manifest(): MetadataRoute.Manifest {
+// Read on every request (not frozen at build time), so the name under the
+// home-screen icon is the family's own, from «إعدادات الموقع».
+export const dynamic = 'force-dynamic'
+
+export default async function manifest(): Promise<MetadataRoute.Manifest> {
+  const { familyName } = await getSiteSettings()
   return {
-    name: 'شجرة العائلة',
-    short_name: 'شجرة العائلة',
+    name: familyName,
+    short_name: familyName,
     description: 'استكشف تاريخ عائلتك واحفظه',
     start_url: '/',
     display: 'standalone',
