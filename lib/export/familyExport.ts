@@ -12,6 +12,7 @@
 
 import { findRootPerson } from '@/lib/tree/layout'
 import { extForMime } from '@/lib/photos/avatars'
+import { DEFAULT_SITE_SETTINGS, type SiteSettings } from '@/lib/settings/siteSettings'
 import type { PersonRow, PartnershipRow, ParentChildRow, RootRow } from '@/lib/supabase/types'
 
 export interface FamilyData {
@@ -19,6 +20,8 @@ export interface FamilyData {
   people: PersonRow[]
   partnerships: PartnershipRow[]
   parentChild: ParentChildRow[]
+  /** The site's settings (migration 008); the defaults when not set up. */
+  site?: SiteSettings
 }
 
 export interface ExportPerson {
@@ -42,6 +45,8 @@ export interface FamilyExport {
   format: 'family-tree-export'
   version: 1
   exported_at: string
+  /** The site this came from (site_settings): its family name, and the other family's site if set. */
+  site_settings: { family_name: string; other_site_url: string | null }
   branches: { id: string; name: string; founder_id: string | null; member_ids: string[] }[]
   people: ExportPerson[]
   marriages: { id: string; partner_ids: [string, string] }[]
@@ -130,6 +135,10 @@ export function buildFamilyExport(
     format: 'family-tree-export',
     version: 1,
     exported_at: exportedAt.toISOString(),
+    site_settings: {
+      family_name: (data.site ?? DEFAULT_SITE_SETTINGS).familyName,
+      other_site_url: (data.site ?? DEFAULT_SITE_SETTINGS).otherSiteUrl,
+    },
     branches: data.roots.map(root => ({
       id: root.id,
       name: root.name,
@@ -152,6 +161,21 @@ export function buildFamilyExport(
     }),
     marriages: c.marriages.map(m => ({ id: m.id, partner_ids: [m.a, m.b] })),
   }
+}
+
+/**
+ * The zip's name: the family's name and the date, so exports of two
+ * families' sites can't be mixed up — «family-export-…» while the name
+ * is still the default.
+ */
+export function exportFileName(familyName: string, date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  const name = familyName === DEFAULT_SITE_SETTINGS.familyName ? '' : familyName
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return `${name || 'family-export'}-${day}.zip`
 }
 
 /** The photos to download: one per real person who has one. */
@@ -259,7 +283,7 @@ export function buildGedcom(exp: FamilyExport): string {
   const lines: string[] = [
     '0 HEAD',
     '1 SOUR FAMILY_TREE_EXPORT',
-    '2 NAME شجرة العائلة',
+    ...textLines(2, 'NAME', exp.site_settings.family_name),
     `1 DATE ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`,
     '1 SUBM @SUBM1@',
     '1 GEDC',
@@ -268,7 +292,7 @@ export function buildGedcom(exp: FamilyExport): string {
     '1 CHAR UTF-8',
     '1 LANG Arabic',
     '0 @SUBM1@ SUBM',
-    '1 NAME شجرة العائلة',
+    ...textLines(1, 'NAME', exp.site_settings.family_name),
   ]
 
   for (const p of exp.people) {
@@ -307,7 +331,7 @@ export function buildReadme(exp: FamilyExport): string {
   const photos = exp.people.filter(p => p.photo).length
   const date = exp.exported_at.slice(0, 10)
   const lines = [
-    `تصدير شجرة العائلة — ${date}`,
+    `تصدير ${exp.site_settings.family_name} — ${date}`,
     '==========================',
     '',
     'هذا الملف يحتوي على بيانات العائلة كاملة، لنقلها إلى أي موقع أو برنامج آخر:',

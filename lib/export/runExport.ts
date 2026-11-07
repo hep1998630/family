@@ -1,6 +1,6 @@
 // lib/export/runExport.ts
 //
-// Builds and downloads family-export-YYYY-MM-DD.zip in the browser. Only
+// Builds and downloads <family name>-YYYY-MM-DD.zip in the browser. Only
 // imported when «تصدير العائلة» is pressed, so JSZip never weighs on the
 // normal page. Runs in the browser (not a server function) because
 // downloading every photo can take longer than a free-plan function may run.
@@ -8,8 +8,9 @@
 import JSZip from 'jszip'
 import { createClient } from '@/lib/supabase/client'
 import { readAll } from '@/lib/supabase/readAll'
+import { DEFAULT_SITE_SETTINGS, settingsFromRow } from '@/lib/settings/siteSettings'
 import {
-  buildFamilyExport, buildGedcom, buildReadme, photoPath, photoTargets,
+  buildFamilyExport, buildGedcom, buildReadme, exportFileName, photoPath, photoTargets,
   type FamilyData, type PhotoResult,
 } from '@/lib/export/familyExport'
 
@@ -31,16 +32,20 @@ export async function runFamilyExport(onProgress: (p: ExportProgress) => void): 
   // 1. Fresh saved data from the database (not the edit-mode draft).
   onProgress({ stage: 'data' })
   const supabase = createClient()
-  const [roots, people, partnerships, parentChild] = await Promise.all([
+  const [roots, people, partnerships, parentChild, site] = await Promise.all([
     readAll(supabase, 'roots'),
     readAll(supabase, 'people'),
     readAll(supabase, 'partnerships'),
     readAll(supabase, 'parent_child'),
+    // The defaults if migration 008 hasn't been run — never a failed export.
+    supabase.from('site_settings').select('family_name, other_site_url').eq('id', 1).maybeSingle()
+      .then(({ data }) => settingsFromRow(data), () => DEFAULT_SITE_SETTINGS),
   ])
   for (const r of [roots, people, partnerships, parentChild]) if (r.error) throw new Error(r.error.message)
   const data: FamilyData = {
     roots: roots.data ?? [], people: people.data ?? [],
     partnerships: partnerships.data ?? [], parentChild: parentChild.data ?? [],
+    site,
   }
 
   // 2. Photos — a failed one is recorded, never fatal.
@@ -75,9 +80,7 @@ export async function runFamilyExport(onProgress: (p: ExportProgress) => void): 
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
 
   // 4. Download.
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const fileName = `family-export-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}.zip`
+  const fileName = exportFileName(site.familyName, new Date())
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url

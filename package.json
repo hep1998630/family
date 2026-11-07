@@ -18,7 +18,8 @@
     "e2e:photo-crop": "node e2e/photo-crop.mjs",
     "e2e:name-wrapping": "node e2e/name-wrapping.mjs",
     "e2e:data-integrity": "node e2e/data-integrity.mjs",
-    "e2e:search-layout": "node e2e/search-layout.mjs"
+    "e2e:search-layout": "node e2e/search-layout.mjs",
+    "e2e:site-settings": "node e2e/site-settings.mjs"
   },
   "dependencies": {
     "@netlify/plugin-nextjs": "^5.15.9",

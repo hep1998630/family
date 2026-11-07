@@ -29,33 +29,54 @@ on:
 
 jobs:
   backup:
+    # One run per Supabase project: the primary family's site, and a second
+    # family's site (see DEPLOYMENT.md, «إضافة شجرة عائلة ثانية»). Each gets
+    # its own artifact, and each project counts as active, so neither free
+    # project is paused. Without the _2 secrets the second is skipped.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: primary
+            url_secret: SUPABASE_URL
+            key_secret: SUPABASE_ANON_KEY
+          - project: second
+            url_secret: SUPABASE_URL_2
+            key_secret: SUPABASE_ANON_KEY_2
     runs-on: ubuntu-latest
     steps:
       - name: Fetch every table from Supabase and back it up
+        id: fetch
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          PROJECT: ${{ matrix.project }}
+          SUPABASE_URL: ${{ secrets[matrix.url_secret] }}
+          SUPABASE_ANON_KEY: ${{ secrets[matrix.key_secret] }}
         run: |
           set -euo pipefail
 
           if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            if [ "$PROJECT" = "second" ]; then
+              echo "::notice::No second family site set up (SUPABASE_URL_2 / SUPABASE_ANON_KEY_2 secrets not set) — skipped."
+              echo "skipped=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "::error::SUPABASE_URL and/or SUPABASE_ANON_KEY repository secrets are not set. See DEPLOYMENT.md for how to add them."
             exit 1
           fi
 
           mkdir -p backup
 
-          # All five tables have public "select using (true)" RLS policies
-          # (supabase/migrations/001, 003 and 005), so the anon key can read
-          # them directly — no service-role key needed for a backup of
-          # public data.
+          # All six tables have public "select using (true)" RLS policies and
+          # SELECT granted to anon (supabase/migrations/001, 003, 004, 005
+          # and 008), so the anon key can read them directly — no
+          # service-role key needed for a backup of public data.
           #
           # The API returns at most 1000 rows per request and silently
           # stops there, so each table is read page by page (ordered by id,
           # so pages neither overlap nor skip) until a page comes back
           # short, then the pages are joined into one <table>.json.
           PAGE=1000
-          for table in roots people partnerships parent_child saved_views; do
+          for table in roots people partnerships parent_child saved_views site_settings; do
             echo "Fetching $table ..."
             offset=0
             pages=()
@@ -66,10 +87,11 @@ jobs:
                 -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
                 "$SUPABASE_URL/rest/v1/$table?select=*&order=id.asc&limit=$PAGE&offset=$offset")
 
-              # saved_views only exists once migration 005 has been run —
-              # back up everything else rather than fail the whole backup.
-              if [ "$table" = "saved_views" ] && [ "$http_status" = "404" ]; then
-                echo "::warning::saved_views not found (migration 005 not run?) — skipped"
+              # saved_views and site_settings only exist once migrations 005
+              # and 008 have been run — back up everything else rather than
+              # fail the whole backup.
+              if [ "$http_status" = "404" ] && { [ "$table" = "saved_views" ] || [ "$table" = "site_settings" ]; }; then
+                echo "::warning::$PROJECT: $table not found (migration not run yet?) — skipped"
                 rm -f "$page"
                 continue 2
               fi
@@ -106,9 +128,9 @@ jobs:
       # Also when the step above failed, so the raw failed response it
       # points to is actually there to look at.
       - name: Upload backup artifact
-        if: always()
+        if: always() && steps.fetch.outputs.skipped != 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: family-tree-backup-${{ github.run_id }}
+          name: family-tree-backup-${{ matrix.project }}-${{ github.run_id }}
           path: backup/
           retention-days: 90

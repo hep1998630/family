@@ -29,6 +29,7 @@ import {
 } from '@/lib/tree/layout'
 import { buildLineage, closeFamilyIds, partnersOf } from '@/lib/tree/lineage'
 import { childRootId, planParentLinks } from '@/lib/tree/parentLinks'
+import { DEFAULT_FAMILY_NAME } from '@/lib/settings/siteSettings'
 import type { PersonRow, PartnershipRow, ParentChildRow, RootRow, SavedViewRow } from '@/lib/supabase/types'
 import type { PersonFormValues } from '@/types'
 
@@ -55,6 +56,10 @@ interface TreeAppProps {
   initialSavedViews?: SavedViewRow[]
   /** Open this saved view (from /view?view=<id>). */
   initialViewId?: string | null
+  /** The site's name (site_settings, read on the server). */
+  familyName?: string
+  /** Link to the other family's site — edit page only, never the public page. */
+  otherSiteUrl?: string | null
 }
 
 type ModalState =
@@ -117,6 +122,8 @@ function TreeAppMain({
   initialFocusId = null,
   initialSavedViews = [],
   initialViewId = null,
+  familyName = DEFAULT_FAMILY_NAME,
+  otherSiteUrl = null,
   live,
 }: TreeAppProps & { live: ReturnType<typeof useLiveData> | null }) {
   const router = useRouter()
@@ -592,7 +599,7 @@ function TreeAppMain({
             {/* In edit mode the controls fill this row on a phone, so the
                 branch name moves down next to the view toggle. */}
             <h1 className={`flex-1 min-w-0 truncate font-sans text-xl font-bold text-charcoal ${isEditable ? 'invisible md:visible' : ''}`}>
-              {selectedRoot ? selectedRoot.name : 'شجرة العائلة'}
+              {selectedRoot ? selectedRoot.name : familyName}
             </h1>
             {!isEditable && (
               <SearchBar people={searchablePeople} onSelectPerson={navigateToPerson} className="hidden md:block w-80" />
@@ -611,6 +618,9 @@ function TreeAppMain({
                   isSaving={draft.isSaving}
                   onSave={draft.saveChanges}
                   adminName={adminName}
+                  isOwner={isOwner}
+                  familyName={familyName}
+                  otherSiteUrl={otherSiteUrl}
                 />
               </>
             )}

@@ -4,6 +4,7 @@ import { createPublicClient } from '@/lib/supabase/server'
 import TreeApp from '@/components/branch/TreeApp'
 import { readAll } from '@/lib/supabase/readAll'
 import { loadSavedViews } from '@/lib/views-server'
+import { getSiteSettings } from '@/lib/settings/getSiteSettings'
 import NotAnAdmin from '@/components/auth/NotAnAdmin'
 import ServerConfigError from '@/components/auth/ServerConfigError'
 import { readAuthHeader } from '@/lib/auth/headers'
@@ -38,6 +39,7 @@ export default async function EditPage({
     { data: partnerships },
     { data: parentChild },
     savedViews,
+    site,
   ] = await Promise.all([
     // Page by page (the API stops at 1000 rows), in a fixed order: the
     // database otherwise returns rows in whatever order they're stored,
@@ -47,6 +49,7 @@ export default async function EditPage({
     readAll(supabase, 'partnerships'),
     readAll(supabase, 'parent_child'),
     loadSavedViews(supabase),
+    getSiteSettings(),
   ])
 
   return (
@@ -62,6 +65,8 @@ export default async function EditPage({
       initialFocusId={focus ?? null}
       initialSavedViews={savedViews}
       initialViewId={view ?? null}
+      familyName={site.familyName}
+      otherSiteUrl={site.otherSiteUrl}
     />
   )
 }
